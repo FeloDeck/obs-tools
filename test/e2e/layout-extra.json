@@ -1,0 +1,128 @@
+{
+	"keys": {
+		"0": {
+			"action": "de.felitendo.obs-tools.monitorset",
+			"settings": {
+				"input": "Desktop-Audio",
+				"monitorType": "monitorOnly"
+			}
+		},
+		"1": {
+			"action": "de.felitendo.obs-tools.virtualcam"
+		},
+		"2": {
+			"action": "de.felitendo.obs-tools.streamtoggle"
+		},
+		"3": {
+			"action": "de.felitendo.obs-tools.browsersource",
+			"settings": {
+				"input": "Web"
+			}
+		},
+		"4": {
+			"action": "de.felitendo.obs-tools.focusedwindow",
+			"settings": {
+				"input": "Window"
+			}
+		},
+		"5": {
+			"action": "de.felitendo.obs-tools.nextscene",
+			"settings": {
+				"direction": "previous"
+			}
+		},
+		"6": {
+			"action": "de.felitendo.obs-tools.droppedframes",
+			"settings": {
+				"frameType": "dropped"
+			}
+		},
+		"7": {
+			"action": "de.felitendo.obs-tools.recordtoggle",
+			"settings": {
+				"customConnection": true,
+				"host": "127.0.0.1",
+				"port": 4999,
+				"password": ""
+			}
+		},
+		"8": {
+			"action": "de.felitendo.obs-tools.sourcevolume",
+			"settings": {
+				"input": "Desktop-Audio",
+				"mode": "set",
+				"unit": "percent",
+				"value": 50
+			}
+		},
+		"9": {
+			"action": "opendeck.multiaction",
+			"children": [
+				{
+					"action": "de.felitendo.obs-tools.studiomode",
+					"settings": {
+						"mode": "enable"
+					}
+				},
+				{
+					"action": "de.felitendo.obs-tools.mutetoggle",
+					"settings": {
+						"input": "Desktop-Audio",
+						"mode": "mute"
+					}
+				},
+				{
+					"action": "de.felitendo.obs-tools.smartscene",
+					"settings": {
+						"scene": "Scene 2"
+					}
+				}
+			]
+		},
+		"10": {
+			"action": "de.felitendo.obs-tools.cpuusage",
+			"settings": {
+				"warnAt": 1,
+				"showMemory": true
+			}
+		},
+		"12": {
+			"action": "de.felitendo.obs-tools.imagesource",
+			"settings": {
+				"scene": "Szene",
+				"input": "Picture",
+				"file": "~/Pictures/obstools-gg.png",
+				"autoHide": 2
+			}
+		},
+		"13": {
+			"action": "de.felitendo.obs-tools.imagesource",
+			"settings": {
+				"scene": "Szene",
+				"input": "Picture",
+				"file": "~/Pictures/obstools-brb.png"
+			}
+		},
+		"11": {
+			"action": "de.felitendo.obs-tools.smartscene",
+			"settings": {
+				"scene": "Szene",
+				"previewFit": "fill",
+				"title": "Main cam",
+				"previewInterval": 0
+			}
+		},
+		"14": {
+			"action": "de.felitendo.obs-tools.settext",
+			"settings": {
+				"input": "Title Text",
+				"press": "down",
+				"hold": "reset",
+				"double": "up",
+				"template": "Live in {n}",
+				"count": 3,
+				"start": 3
+			}
+		}
+	}
+}

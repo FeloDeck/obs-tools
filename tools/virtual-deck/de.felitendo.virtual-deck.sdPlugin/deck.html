@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Virtual Stream Deck</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--key: 96px;
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+				background: #101114;
+				color: #d4d4d8;
+				font: 13px/1.4 system-ui, sans-serif;
+			}
+			.deck {
+				width: max-content;
+				background: linear-gradient(#26272c, #1b1c20);
+				border-radius: 22px;
+				padding: 22px 24px 18px;
+				box-shadow: 0 20px 60px #000a, inset 0 1px 0 #ffffff12;
+			}
+			.keys {
+				display: grid;
+				gap: 14px;
+			}
+			.key {
+				width: var(--key);
+				height: var(--key);
+				border-radius: 12px;
+				background: #000 center / cover no-repeat;
+				border: 0;
+				padding: 0;
+				box-shadow: 0 2px 0 #0008, inset 0 0 0 1px #ffffff14;
+				cursor: pointer;
+				transition: transform 0.05s;
+			}
+			.key.down {
+				transform: scale(0.94);
+			}
+			.strip {
+				display: grid;
+				width: 0;
+				min-width: 100%;
+				margin-top: 18px;
+				border-radius: 10px;
+				overflow: hidden;
+				background: #000;
+			}
+			.strip div {
+				aspect-ratio: 2;
+				cursor: pointer;
+				background: #000 center / cover no-repeat;
+				border-right: 1px solid #ffffff10;
+			}
+			.strip div:last-child {
+				border-right: 0;
+			}
+			.dials {
+				display: grid;
+				width: 0;
+				min-width: 100%;
+				margin-top: 14px;
+				justify-items: center;
+			}
+			.dial {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+			.knob {
+				width: 56px;
+				height: 56px;
+				border-radius: 50%;
+				background: radial-gradient(circle at 40% 35%, #4a4b52, #1d1e22 70%);
+				box-shadow: 0 3px 8px #000c, inset 0 1px 0 #ffffff22;
+				border: 0;
+				cursor: pointer;
+				position: relative;
+			}
+			.knob::after {
+				content: "";
+				position: absolute;
+				left: 50%;
+				top: 6px;
+				width: 3px;
+				height: 12px;
+				margin-left: -1.5px;
+				border-radius: 2px;
+				background: #c8c8d0;
+				transform-origin: 1.5px 22px;
+				transform: rotate(var(--angle, 0deg));
+			}
+			.knob.down {
+				transform: scale(0.94);
+			}
+			.turn {
+				background: #2c2d33;
+				border: 1px solid #3f3f46;
+				color: #d4d4d8;
+				border-radius: 6px;
+				width: 26px;
+				height: 26px;
+				cursor: pointer;
+			}
+			.foot {
+				margin-top: 14px;
+				text-align: center;
+				color: #71717a;
+				font-size: 12px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="deck">
+			<div class="keys" id="keys"></div>
+			<div class="strip" id="strip"></div>
+			<div class="dials" id="dials"></div>
+			<div class="foot" id="foot">Connecting…</div>
+		</div>
+		<script>
+			const post = (path) => fetch(path, { method: "POST" });
+			let device;
+			const angles = [];
+
+			function build(state) {
+				device = state.device;
+				const keys = document.getElementById("keys");
+				keys.style.gridTemplateColumns = `repeat(${device.columns}, var(--key))`;
+				keys.replaceChildren();
+				for (let i = 0; i < device.rows * device.columns; i++) {
+					const key = document.createElement("button");
+					key.className = "key";
+					key.id = `key-${i}`;
+					key.title = `Key ${i}`;
+					const up = () => {
+						if (!key.classList.contains("down")) return;
+						key.classList.remove("down");
+						post(`/api/key/${i}/up`);
+					};
+					key.addEventListener("pointerdown", (e) => {
+						key.setPointerCapture(e.pointerId);
+						key.classList.add("down");
+						post(`/api/key/${i}/down`);
+					});
+					key.addEventListener("pointerup", up);
+					key.addEventListener("pointercancel", up);
+					keys.append(key);
+					setImage("Keypad", i, state.keys[i]);
+				}
+				const strip = document.getElementById("strip");
+				const dials = document.getElementById("dials");
+				strip.style.display = device.encoders ? "grid" : "none";
+				strip.style.gridTemplateColumns = dials.style.gridTemplateColumns = `repeat(${device.encoders}, 1fr)`;
+				strip.replaceChildren();
+				dials.replaceChildren();
+				for (let i = 0; i < device.encoders; i++) {
+					const tile = document.createElement("div");
+					tile.id = `dial-${i}`;
+					tile.title = "Tap (touch screen)";
+					tile.addEventListener("click", () => post(`/api/touch/${i}`));
+					strip.append(tile);
+					setImage("Encoder", i, state.dials[i]);
+
+					const wrap = document.createElement("div");
+					wrap.className = "dial";
+					const knob = document.createElement("button");
+					knob.className = "knob";
+					knob.title = "Click to press, scroll to turn";
+					angles[i] = 0;
+					const rotate = (ticks) => {
+						angles[i] += ticks * 15;
+						knob.style.setProperty("--angle", `${angles[i]}deg`);
+						post(`/api/dial/${i}/rotate?ticks=${ticks}`);
+					};
+					knob.addEventListener("pointerdown", () => {
+						knob.classList.add("down");
+						post(`/api/dial/${i}/down`);
+					});
+					knob.addEventListener("pointerup", () => {
+						knob.classList.remove("down");
+						post(`/api/dial/${i}/up`);
+					});
+					knob.addEventListener("wheel", (e) => {
+						e.preventDefault();
+						rotate(e.deltaY < 0 ? 1 : -1);
+					});
+					const left = Object.assign(document.createElement("button"), { className: "turn", textContent: "⟲", title: "Turn left" });
+					const right = Object.assign(document.createElement("button"), { className: "turn", textContent: "⟳", title: "Turn right" });
+					left.onclick = () => rotate(-1);
+					right.onclick = () => rotate(1);
+					wrap.append(left, knob, right);
+					dials.append(wrap);
+				}
+				setBrightness(state.brightness);
+			}
+
+			function setImage(controller, position, image) {
+				if (controller === "Encoder") {
+					const tile = document.getElementById(`dial-${position}`);
+					if (tile) tile.style.backgroundImage = image ? `url("${image}")` : "none";
+				} else {
+					const key = document.getElementById(`key-${position}`);
+					if (key) key.style.backgroundImage = image ? `url("${image}")` : "none";
+				}
+			}
+
+			function setBrightness(value) {
+				// Like the real hardware: only the screens get darker.
+				for (const el of document.querySelectorAll(".keys, .strip")) el.style.filter = `brightness(${0.55 + (value / 100) * 0.45})`;
+			}
+
+			const events = new EventSource("/events");
+			events.onopen = () => (document.getElementById("foot").textContent = "Virtual Stream Deck · OpenDeck");
+			events.onerror = () => (document.getElementById("foot").textContent = "Lost OpenDeck, retrying…");
+			events.onmessage = (e) => {
+				const msg = JSON.parse(e.data);
+				if (msg.type === "state") build(msg);
+				else if (msg.type === "image") setImage(msg.controller, msg.position, msg.image);
+				else if (msg.type === "brightness") setBrightness(msg.brightness);
+				else if (msg.type === "clear") {
+					for (let i = 0; i < device.rows * device.columns; i++) setImage("Keypad", i, null);
+					for (let i = 0; i < device.encoders; i++) setImage("Encoder", i, null);
+				}
+			};
+		</script>
+	</body>
+</html>

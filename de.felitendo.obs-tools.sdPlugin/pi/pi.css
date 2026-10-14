@@ -1,0 +1,877 @@
+/* Same look as the other FeloDeck plugins (and Stream Deck's own settings pages). */
+:root {
+	color-scheme: dark;
+	--bg: #2d2d2d;
+	--panel: #353535;
+	--card: #3a3a3a;
+	--field: #3d3d3d;
+	--field-hover: #454545;
+	--text: #d8d8d8;
+	--bright: #ffffff;
+	--muted: #969696;
+	--faint: #6b6b6b;
+	/* The blue OpenDeck uses for the selected key. */
+	--accent: #2b7fff;
+	--pop: #3a3a3a;
+	--hover: #4a4a4a;
+	--green: #3fb950;
+	--amber: #e3a008;
+	--red: #f25c54;
+	--radius: 5px;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: "Segoe UI", Arial, Roboto, Helvetica, sans-serif;
+	font-size: 9pt;
+	line-height: 1.4;
+}
+
+body {
+	padding: 4px 10px 16px;
+}
+
+#app {
+	max-width: 560px;
+}
+
+[hidden] {
+	display: none !important;
+}
+
+/* Connection status */
+.status {
+	--status-color: #8b8b8b;
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	margin: 6px 0 10px;
+	padding: 9px 12px;
+	border-left: 3px solid var(--status-color);
+	border-radius: var(--radius);
+	background: var(--card);
+}
+
+.status.ok {
+	--status-color: var(--green);
+}
+
+.status.warn {
+	--status-color: var(--amber);
+}
+
+.status.bad {
+	--status-color: var(--red);
+}
+
+.status-dot {
+	flex: none;
+	width: 9px;
+	height: 9px;
+	margin-top: 4px;
+	border-radius: 50%;
+	background: var(--status-color);
+}
+
+.status.busy .status-dot {
+	animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+	50% {
+		opacity: 0.3;
+	}
+}
+
+.status-title {
+	color: var(--bright);
+	font-weight: 600;
+}
+
+.status-hint {
+	margin-top: 2px;
+	color: #b3b3b3;
+	overflow-wrap: anywhere;
+}
+
+.status-action {
+	flex: none;
+	margin-left: auto;
+	padding: 0 2px;
+	border: 0;
+	background: none;
+	color: var(--accent);
+	cursor: pointer;
+}
+
+.status-action:hover {
+	text-decoration: underline;
+}
+
+/* Connected: one quiet line instead of a card. */
+.status.quiet {
+	align-items: center;
+	gap: 7px;
+	margin: 2px 0 10px;
+	padding: 0;
+	border: 0;
+	background: none;
+}
+
+.status.quiet .status-dot {
+	width: 7px;
+	height: 7px;
+	margin: 0;
+}
+
+.status.quiet .status-title {
+	color: var(--muted);
+	font-weight: 400;
+}
+
+.status.quiet .status-hint {
+	margin: 0;
+	color: var(--faint);
+}
+
+/* Notes and hints */
+.note {
+	margin: 6px 0 10px;
+	color: var(--muted);
+}
+
+.hint {
+	margin: 0 0 10px;
+	padding: 8px 12px;
+	border-left: 3px solid var(--amber);
+	border-radius: var(--radius);
+	background: var(--card);
+}
+
+/* Rows: label left, control right, like sdpi-item */
+.row {
+	display: grid;
+	grid-template-columns: 30% minmax(0, 1fr);
+	gap: 10px;
+	align-items: center;
+	margin: 6px 0;
+}
+
+.row > .name {
+	color: var(--text);
+	text-align: right;
+}
+
+.row > .name:not(:empty)::after {
+	content: ":";
+}
+
+.row.top {
+	align-items: start;
+}
+
+.row.top > .name {
+	padding-top: 5px;
+}
+
+.row .hint-line {
+	grid-column: 2;
+	margin-top: -3px;
+	color: var(--muted);
+	font-size: 8.5pt;
+}
+
+.control {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.control > :is(input, select, textarea) {
+	flex: 1;
+	min-width: 0;
+}
+
+input,
+select,
+textarea,
+button {
+	font: inherit;
+	color: var(--text);
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+select,
+textarea {
+	height: 26px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 3px;
+	background: var(--field);
+	line-height: 26px;
+	outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+	box-shadow: 0 0 0 1px var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--faint);
+}
+
+input:disabled,
+select:disabled {
+	opacity: 0.5;
+}
+
+input[type="number"] {
+	max-width: 110px;
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+textarea {
+	height: auto;
+	min-height: 60px;
+	padding: 5px 8px;
+	line-height: 1.4;
+	resize: vertical;
+}
+
+/* Color: a plain swatch, the native picker opens on click */
+.swatch {
+	position: relative;
+	flex: none;
+	width: 44px;
+	height: 24px;
+	border: 1px solid rgb(255 255 255 / 0.18);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.swatch input {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	opacity: 0;
+	cursor: pointer;
+}
+
+.unit {
+	color: var(--muted);
+}
+
+/* Checkbox like sdpi-components */
+.check {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 2px 0;
+	cursor: pointer;
+	user-select: none;
+}
+
+.check input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.check-box {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	border: 1px solid rgb(0 0 0 / 0.25);
+	border-radius: 3px;
+	background: var(--field);
+	transition: background-color 0.1s;
+}
+
+.check:hover .check-box {
+	background-color: var(--field-hover);
+}
+
+.check input:checked + .check-box {
+	border-color: rgb(0 0 0 / 0.4);
+	background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10' viewBox='0 0 12 10'%3E%3Cpath d='M1.5 5.2 4.4 8 10.5 1.8' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center;
+}
+
+.check input:focus-visible + .check-box {
+	box-shadow: 0 0 0 2px rgb(43 127 255 / 0.5);
+}
+
+/* Number field with − and + */
+.stepper {
+	display: inline-flex;
+	align-items: stretch;
+	height: 26px;
+	border-radius: 3px;
+	background: var(--field);
+	overflow: hidden;
+}
+
+.stepper input[type="number"] {
+	width: 64px;
+	padding: 0 4px;
+	border-radius: 0;
+	background: transparent;
+	text-align: center;
+}
+
+.stepper input[type="number"]:focus {
+	box-shadow: none;
+}
+
+.stepper:focus-within {
+	box-shadow: 0 0 0 1px var(--accent);
+}
+
+.step-btn {
+	width: 24px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.step-btn:hover {
+	background: var(--field-hover);
+	color: var(--bright);
+}
+
+.control > .stepper {
+	flex: none;
+}
+
+/* Drop-down */
+.dropdown {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+}
+
+.dd-button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	height: 26px;
+	padding: 0 9px 0 8px;
+	border: 0;
+	border-radius: 3px;
+	background: var(--field);
+	text-align: left;
+	cursor: pointer;
+}
+
+.dd-button:hover {
+	background: var(--field-hover);
+}
+
+.dd-button:focus-visible,
+.dropdown.open .dd-button {
+	box-shadow: 0 0 0 1px var(--accent);
+	outline: none;
+}
+
+.dd-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dd-label.placeholder {
+	color: var(--faint);
+}
+
+.dd-button.missing .dd-label {
+	color: var(--amber);
+}
+
+.dd-chevron {
+	display: flex;
+	color: var(--muted);
+	transition: transform 0.15s;
+}
+
+.dropdown.open .dd-chevron {
+	transform: rotate(180deg);
+}
+
+.dd-pop {
+	position: absolute;
+	z-index: 50;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	padding: 4px;
+	border: 1px solid rgb(255 255 255 / 0.08);
+	border-radius: var(--radius);
+	background: var(--pop);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.dd-pop.up {
+	top: auto;
+	bottom: calc(100% + 4px);
+}
+
+.dd-search {
+	width: 100%;
+	margin-bottom: 4px;
+}
+
+.dd-list {
+	overflow-y: auto;
+}
+
+.dd-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 26px;
+	padding: 3px 8px 3px 4px;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.dd-item.active {
+	background: var(--hover);
+}
+
+.dd-item.selected {
+	color: var(--bright);
+}
+
+.dd-item.missing {
+	color: var(--amber);
+}
+
+.dd-check {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	color: var(--accent);
+}
+
+.dd-item.active .dd-check {
+	color: #5c9cff;
+}
+
+.dd-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dd-empty {
+	padding: 6px 8px;
+	color: var(--muted);
+}
+
+/* Dark scroll bars */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: 5px;
+	background: #555 padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: #666;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* Small choices */
+.segmented {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 4px;
+	background: var(--field);
+}
+
+.segmented button {
+	padding: 3px 10px;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	cursor: pointer;
+}
+
+.segmented button:hover {
+	background: var(--field-hover);
+}
+
+.segmented button.on {
+	background: var(--accent);
+	color: #fff;
+}
+
+/* Choices with a small picture of the key. The chosen one gets the blue frame OpenDeck puts
+   around the selected key. */
+/* All tiles of a row as wide as the widest. */
+.tiles {
+	display: inline-grid;
+	grid-auto-columns: 1fr;
+	grid-auto-flow: column;
+	gap: 6px;
+}
+
+.tile {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 7px;
+	min-width: 88px;
+	padding: 10px 8px 7px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--field);
+	cursor: pointer;
+	transition: background-color 0.12s;
+}
+
+.tile:hover {
+	background: var(--field-hover);
+}
+
+.tile:focus-visible {
+	outline: 2px solid rgb(43 127 255 / 0.5);
+	outline-offset: 1px;
+}
+
+.tile-key {
+	display: block;
+	width: 62px;
+	height: 62px;
+	overflow: hidden;
+	border-radius: 12px;
+	background: #000;
+	box-shadow: 0 0 0 2px #4a4a4a;
+	transition: box-shadow 0.12s;
+}
+
+.tile-key svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.tile-name {
+	color: var(--muted);
+	line-height: 1.2;
+}
+
+.tile.on {
+	background: rgb(43 127 255 / 0.14);
+}
+
+.tile.on .tile-key {
+	box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tile.on .tile-name {
+	color: var(--bright);
+}
+
+button.btn {
+	height: 26px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 3px;
+	background: var(--field);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+button.btn:hover {
+	background: var(--field-hover);
+}
+
+button.btn.primary {
+	background: var(--accent);
+	color: #fff;
+}
+
+button.btn.danger {
+	color: #ffb4b6;
+}
+
+button.btn.icon {
+	width: 26px;
+	padding: 0;
+}
+
+button.btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.buttons {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.heading {
+	margin: 14px 0 4px;
+	padding-bottom: 3px;
+	border-bottom: 1px solid #404040;
+	color: var(--muted);
+	font-size: 8pt;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.msg {
+	margin-top: 6px;
+	color: var(--muted);
+}
+
+.msg.ok {
+	color: #7ee2a8;
+}
+
+.msg.bad {
+	color: #ff9a9d;
+}
+
+.msg.warn {
+	color: #ffd38a;
+}
+
+.missing {
+	color: var(--amber);
+}
+
+/* Boxes inside the page (phases, Twitch, which OBS) */
+.box {
+	margin: 10px 0;
+	padding: 8px 12px 10px;
+	border-radius: var(--radius);
+	background: var(--panel);
+}
+
+.box > .box-title {
+	margin-bottom: 4px;
+	color: #e6e6e6;
+	font-weight: 600;
+}
+
+/* Collapsible panels at the bottom */
+/* Sections of the key settings. The heading folds the fields below it. */
+.section > summary {
+	cursor: pointer;
+	list-style: none;
+	user-select: none;
+}
+
+.section > summary::-webkit-details-marker {
+	display: none;
+}
+
+.section > summary::before {
+	content: "";
+	display: inline-block;
+	margin: 0 6px 1px 1px;
+	border-style: solid;
+	border-width: 3.5px 0 3.5px 5px;
+	border-color: transparent transparent transparent currentColor;
+	transition: transform 0.15s;
+}
+
+.section[open] > summary::before {
+	transform: rotate(90deg);
+}
+
+.section > summary:hover {
+	color: var(--text);
+}
+
+/* Some room after the last section. */
+.section + :not(.section) {
+	margin-top: 16px;
+}
+
+.section:last-child {
+	margin-bottom: 6px;
+}
+
+/* Connection settings, opened from the status line. */
+.connection {
+	margin: 0 0 12px;
+	padding: 10px 12px;
+	border-radius: var(--radius);
+	background: var(--panel);
+}
+
+.connection > .box-title {
+	margin-bottom: 6px;
+}
+
+/* Rows in the box use the same grid as the rows below it. */
+.connection > .row,
+.panel-section > .row {
+	margin-left: -12px;
+	margin-right: -12px;
+}
+
+.connection > .row > :not(.name),
+.panel-section > .row > :not(.name) {
+	margin-right: 12px;
+}
+
+.connection .row .note,
+.connection .row .msg {
+	margin: 0;
+}
+
+.panel-section {
+	margin-top: 10px;
+	padding-top: 4px;
+	border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.section-title {
+	color: #e6e6e6;
+	font-weight: 600;
+}
+
+.steps {
+	margin: 0;
+	padding: 0 0 0 20px;
+}
+
+.steps li + li {
+	margin-top: 5px;
+}
+
+.steps b {
+	color: var(--bright);
+	font-weight: 600;
+}
+
+code {
+	padding: 0 4px;
+	border-radius: 3px;
+	background: #252525;
+	color: var(--bright);
+	font-family: Consolas, Menlo, monospace;
+	font-size: 0.95em;
+}
+
+/* Animation phases */
+.phase {
+	margin: 8px 0;
+	padding: 6px 10px 8px;
+	border-radius: var(--radius);
+	background: var(--card);
+}
+
+.phase-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 4px;
+}
+
+.phase-head .label {
+	flex: 1;
+	color: var(--bright);
+	font-weight: 600;
+}
+
+.phase-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: 5px 10px;
+}
+
+.phase-grid label {
+	display: grid;
+	grid-template-columns: 74px minmax(0, 1fr);
+	align-items: center;
+	gap: 6px;
+	color: var(--muted);
+}
+
+.phase-grid input,
+.phase-grid .dropdown {
+	width: 100%;
+	max-width: none !important;
+}
+
+.phase-grid input.changed {
+	box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.box > textarea {
+	width: 100%;
+	margin-top: 6px;
+	font-family: Consolas, Menlo, monospace;
+}
+
+.code {
+	padding: 2px 10px;
+	border-radius: 3px;
+	background: #6441a5;
+	color: #fff;
+	font-family: Consolas, Menlo, monospace;
+	font-size: 20px;
+	letter-spacing: 0.15em;
+}
+
+details.inline > summary {
+	margin: 8px 0 4px;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+/* The last error of the key, right below the status */
+.key-error {
+	margin: -4px 0 10px;
+	padding: 6px 10px;
+	border-radius: var(--radius);
+	background: rgba(242, 92, 84, 0.12);
+}

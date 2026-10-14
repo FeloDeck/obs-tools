@@ -1,0 +1,129 @@
+{
+	"keys": {
+		"0": {
+			"action": "de.felitendo.obs-tools.sourcevisibility",
+			"settings": {
+				"scene": "Szene",
+				"source": "Title Text"
+			}
+		},
+		"1": {
+			"action": "de.felitendo.obs-tools.hotkey",
+			"settings": {
+				"mode": "name",
+				"hotkey": "libobs.mute",
+				"context": "Desktop-Audio"
+			}
+		},
+		"2": {
+			"action": "de.felitendo.obs-tools.screenshot",
+			"settings": {
+				"folder": "~/Pictures/obstools-test"
+			}
+		},
+		"3": {
+			"action": "de.felitendo.obs-tools.recordtools",
+			"settings": {
+				"operation": "chapter",
+				"chapterName": "Test chapter"
+			}
+		},
+		"4": {
+			"action": "de.felitendo.obs-tools.recordtools",
+			"settings": {
+				"operation": "split"
+			}
+		},
+		"5": {
+			"action": "de.felitendo.obs-tools.mediacontrol",
+			"settings": {
+				"input": "Clip Player",
+				"operation": "playpause"
+			}
+		},
+		"6": {
+			"action": "de.felitendo.obs-tools.mediacontrol",
+			"settings": {
+				"input": "Clip Player",
+				"operation": "stop"
+			}
+		},
+		"7": {
+			"action": "de.felitendo.obs-tools.profile",
+			"settings": {
+				"kind": "profile",
+				"name": "Test 2"
+			}
+		},
+		"8": {
+			"action": "de.felitendo.obs-tools.profile",
+			"settings": {
+				"kind": "profile",
+				"name": "Unbenannt"
+			}
+		},
+		"9": {
+			"action": "de.felitendo.obs-tools.settext",
+			"settings": {
+				"input": "Title Text",
+				"press": "set",
+				"hold": "none",
+				"text": "Live in 5"
+			}
+		},
+		"10": {
+			"action": "de.felitendo.obs-tools.settext",
+			"settings": {
+				"input": "Title Text",
+				"press": "up",
+				"hold": "reset",
+				"double": "down",
+				"template": "Deaths: {n}"
+			}
+		},
+		"11": {
+			"action": "de.felitendo.obs-tools.settext",
+			"settings": {
+				"input": "Title Text",
+				"press": "next",
+				"hold": "first",
+				"lines": "One\nTwo\nThree"
+			}
+		},
+		"12": {
+			"action": "de.felitendo.obs-tools.streamhealth"
+		},
+		"13": {
+			"action": "de.felitendo.obs-tools.sourcevolume",
+			"settings": {
+				"input": "Clip Player",
+				"mode": "up"
+			}
+		},
+		"14": {
+			"action": "de.felitendo.obs-tools.recordtoggle"
+		}
+	},
+	"dials": {
+		"0": {
+			"action": "de.felitendo.obs-tools.inputvolume",
+			"settings": {
+				"input": "Clip Player"
+			}
+		},
+		"1": {
+			"action": "de.felitendo.obs-tools.transitiondial"
+		},
+		"2": {
+			"action": "de.felitendo.obs-tools.scenedial"
+		},
+		"3": {
+			"action": "de.felitendo.obs-tools.filterdial",
+			"settings": {
+				"source": "Box",
+				"filter": "Look",
+				"setting": "opacity"
+			}
+		}
+	}
+}

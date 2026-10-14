@@ -1,0 +1,25 @@
+{
+	"keys": {
+		"0": { "action": "de.felitendo.obs-tools.smartscene", "settings": { "scene": "Szene", "previewInterval": 1 } },
+		"1": { "action": "de.felitendo.obs-tools.smartscene", "settings": { "scene": "Scene 2", "previewInterval": 1 } },
+		"2": { "action": "de.felitendo.obs-tools.previousscene" },
+		"3": { "action": "de.felitendo.obs-tools.studiomode" },
+		"4": { "action": "de.felitendo.obs-tools.streamhealth" },
+		"5": { "action": "de.felitendo.obs-tools.sourcevisibility", "settings": { "scene": "Szene", "source": "Title Text" } },
+		"6": { "action": "de.felitendo.obs-tools.mediacontrol", "settings": { "input": "Clip Player", "operation": "playpause" } },
+		"7": { "action": "de.felitendo.obs-tools.settext", "settings": { "input": "Title Text", "press": "up", "hold": "reset", "template": "Deaths: {n}", "count": 3 } },
+		"8": { "action": "de.felitendo.obs-tools.sourcevolume", "settings": { "input": "Clip Player", "mode": "up" } },
+		"9": { "action": "de.felitendo.obs-tools.mutetoggle", "settings": { "input": "Desktop-Audio" } },
+		"10": { "action": "de.felitendo.obs-tools.instantreplay" },
+		"11": { "action": "de.felitendo.obs-tools.recordtoggle" },
+		"12": { "action": "de.felitendo.obs-tools.filtertoggle", "settings": { "source": "Box", "filter": "Tint" } },
+		"13": { "action": "de.felitendo.obs-tools.cpuusage" },
+		"14": { "action": "de.felitendo.obs-tools.droppedframes", "settings": { "frameType": "skipped" } }
+	},
+	"dials": {
+		"0": { "action": "de.felitendo.obs-tools.inputvolume", "settings": { "input": "Clip Player" } },
+		"1": { "action": "de.felitendo.obs-tools.scenedial" },
+		"2": { "action": "de.felitendo.obs-tools.transitiondial" },
+		"3": { "action": "de.felitendo.obs-tools.filterdial", "settings": { "source": "Box", "filter": "Look", "setting": "opacity" } }
+	}
+}

@@ -1,0 +1,22 @@
+{
+	"keys": {
+		"0": { "action": "de.felitendo.obs-tools.smartscene", "settings": { "scene": "Szene", "previewInterval": 1 } },
+		"1": { "action": "de.felitendo.obs-tools.smartscene", "settings": { "scene": "Scene 2", "previewInterval": 1 } },
+		"2": { "action": "de.felitendo.obs-tools.studiomode" },
+		"3": { "action": "de.felitendo.obs-tools.previousscene" },
+		"4": { "action": "de.felitendo.obs-tools.nextscene" },
+		"5": { "action": "de.felitendo.obs-tools.cpuusage" },
+		"6": { "action": "de.felitendo.obs-tools.droppedframes", "settings": { "frameType": "missed" } },
+		"7": { "action": "de.felitendo.obs-tools.sourcevolume", "settings": { "input": "Desktop-Audio", "mode": "down", "step": 3 } },
+		"8": { "action": "de.felitendo.obs-tools.mutetoggle", "settings": { "input": "Desktop-Audio" } },
+		"9": { "action": "de.felitendo.obs-tools.settransition", "settings": { "transition": "Schnitt" } },
+		"10": { "action": "de.felitendo.obs-tools.recordtoggle" },
+		"11": { "action": "de.felitendo.obs-tools.instantreplay", "settings": { "autoReplay": true, "mediaInput": "Replay Player", "replayScene": "Replay", "speed": 50 } },
+		"12": { "action": "de.felitendo.obs-tools.videoplayer", "settings": { "input": "Clip Player", "file": "~/Videos/obstools-test.mp4", "speed": 100 } },
+		"13": { "action": "de.felitendo.obs-tools.sourceanimation", "settings": { "scene": "Szene", "source": "Box", "resetAtEnd": true, "phases": [ { "duration": 1000, "easing": "easeInOut", "changes": { "positionX": 600, "rotation": 90 } }, { "duration": 500, "easing": "easeOut", "changes": { "scaleX": 1, "scaleY": 1 } } ] } },
+		"14": { "action": "de.felitendo.obs-tools.filtertoggle", "settings": { "source": "Box", "filter": "Tint" } }
+	},
+	"dials": {
+		"0": { "action": "de.felitendo.obs-tools.inputvolume", "settings": { "input": "Desktop-Audio" } }
+	}
+}

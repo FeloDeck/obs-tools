@@ -1,0 +1,694 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+	"UUID": "de.felitendo.obs-tools",
+	"Name": "OBS Tools",
+	"Version": "0.1.0",
+	"Author": "Felitendo",
+	"Description": "Advanced OBS tools for OpenDeck on Linux: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
+	"URL": "https://github.com/FeloDeck/obs-tools",
+	"Icon": "images/plugin",
+	"Category": "OBS Tools",
+	"CategoryIcon": "images/category",
+	"CodePath": "plugin/main.js",
+	"Nodejs": {
+		"Version": "22"
+	},
+	"PropertyInspectorPath": "pi/index.html",
+	"SDKVersion": 2,
+	"OS": [
+		{
+			"Platform": "linux"
+		}
+	],
+	"Actions": [
+		{
+			"UUID": "de.felitendo.obs-tools.recordtoggle",
+			"Name": "Recording Toggle",
+			"Icon": "images/actions/record",
+			"Tooltip": "Start, stop or pause recording, on this PC or on another OBS in your network.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/record",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/record-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.streamtoggle",
+			"Name": "Streaming Toggle",
+			"Icon": "images/actions/stream",
+			"Tooltip": "Start or stop streaming, on this PC or on another OBS in your network.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/stream",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/stream-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.smartscene",
+			"Name": "Smart Scene Switcher",
+			"Icon": "images/actions/scene",
+			"Tooltip": "Switch scenes. In studio mode: first press to preview, second press to go live. Shows a live picture with a red (live) or green (preview) frame.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/scene",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.mutetoggle",
+			"Name": "Source Mute Toggle",
+			"Icon": "images/actions/mute",
+			"Tooltip": "Mute or unmute an audio source.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/unmuted",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/muted",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.sourcevisibility",
+			"Name": "Source Visibility",
+			"Icon": "images/actions/eye",
+			"Tooltip": "Show or hide a source in a scene.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/visibility",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/visibility-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.instantreplay",
+			"Name": "Instant Replay",
+			"Icon": "images/actions/replay",
+			"Tooltip": "Press to save the replay buffer, play it on stream and clip it on Twitch. Hold to turn the replay buffer on or off.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/replay",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/replay-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.sourcevolume",
+			"Name": "Source Volume",
+			"Icon": "images/actions/volume",
+			"Tooltip": "Turn the volume of an audio source up, down or to a set value, with a live level meter. Hold the key to keep going.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/volume",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.inputvolume",
+			"Name": "Volume (Dial)",
+			"Icon": "images/actions/volume",
+			"Tooltip": "Turn the dial to change the volume of an audio source, with a live level meter. Press or touch to mute.",
+			"Controllers": [
+				"Encoder"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/encoder/volume-key"
+				}
+			],
+			"Encoder": {
+				"layout": "layouts/volume-meter.json",
+				"Icon": "images/encoder/volume",
+				"TriggerDescription": {
+					"Rotate": "Volume",
+					"Push": "Mute",
+					"Touch": "Mute"
+				}
+			}
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.scenedial",
+			"Name": "Scene (Dial)",
+			"Icon": "images/actions/scene",
+			"Tooltip": "Turn the dial to pick a scene (with a picture of it), press to switch.",
+			"Controllers": [
+				"Encoder"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/encoder/scene-key"
+				}
+			],
+			"Encoder": {
+				"layout": "layouts/scene-dial.json",
+				"Icon": "images/encoder/scene",
+				"TriggerDescription": {
+					"Rotate": "Pick a scene",
+					"Push": "Switch",
+					"Touch": "Switch"
+				}
+			}
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.studiomode",
+			"Name": "Studio Mode Toggle",
+			"Icon": "images/actions/studio",
+			"Tooltip": "Turn studio mode on or off.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/studio",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/studio-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.previousscene",
+			"Name": "Last Scene",
+			"Icon": "images/actions/back",
+			"Tooltip": "Go back to the scene that was live before. Shows its name.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/back",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.nextscene",
+			"Name": "Next Scene",
+			"Icon": "images/actions/next",
+			"Tooltip": "Go to the next scene in the scene list, or the one above.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/next",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.mediacontrol",
+			"Name": "Media Control",
+			"Icon": "images/actions/playPause",
+			"Tooltip": "Play, pause, stop, restart or skip in a media source. Shows the time left or played.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/media",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.videoplayer",
+			"Name": "Video Player",
+			"Icon": "images/actions/video",
+			"Tooltip": "Play a file in a media source. Many keys can share one source, each with its own file and speed.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/video",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/video-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.imagesource",
+			"Name": "Image Source",
+			"Icon": "images/actions/image",
+			"Tooltip": "Show a picture in an image source. Many keys can share one source, each with its own picture. Can hide it again after some seconds.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/image",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/image-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.settext",
+			"Name": "Set Text",
+			"Icon": "images/actions/text",
+			"Tooltip": "Change the text of a text source: a fixed text, the next line of a list, or a counter that counts up or down.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/text",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.filtertoggle",
+			"Name": "Filter Toggle",
+			"Icon": "images/actions/filter",
+			"Tooltip": "Turn a filter on a source on or off.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/filter",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/filter-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.streamhealth",
+			"Name": "Stream Health",
+			"Icon": "images/actions/health",
+			"Tooltip": "Bitrate, dropped frames and a green, yellow or red light for your stream.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/health",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.virtualcam",
+			"Name": "Virtual Camera Toggle",
+			"Icon": "images/actions/virtualcam",
+			"Tooltip": "Start or stop the OBS virtual camera.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/virtualcam",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/virtualcam-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.recordtools",
+			"Name": "Recording Marker",
+			"Icon": "images/actions/chapter",
+			"Tooltip": "While recording: add a chapter marker or start a new file.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/chapter",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.screenshot",
+			"Name": "Screenshot",
+			"Icon": "images/actions/camera",
+			"Tooltip": "Save a picture of the live scene, or of any scene or source.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/screenshot",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.hotkey",
+			"Name": "OBS Hotkey",
+			"Icon": "images/actions/keyboard",
+			"Tooltip": "Press any OBS hotkey, by its name or by the keys it is set to in OBS.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/hotkey",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.settransition",
+			"Name": "Set Transition",
+			"Icon": "images/actions/transition",
+			"Tooltip": "Set the scene transition and its duration.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/transition",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/transition-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.transitiondial",
+			"Name": "Transition (Dial)",
+			"Icon": "images/actions/transition",
+			"Tooltip": "Turn the dial to change the transition time, press for the next transition.",
+			"Controllers": [
+				"Encoder"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/encoder/transition-key"
+				}
+			],
+			"Encoder": {
+				"layout": "layouts/dial.json",
+				"Icon": "images/encoder/transition",
+				"TriggerDescription": {
+					"Rotate": "Transition time",
+					"Push": "Next transition",
+					"Touch": "Next transition"
+				}
+			}
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.filterdial",
+			"Name": "Filter (Dial)",
+			"Icon": "images/actions/filter",
+			"Tooltip": "Turn the dial to change a number in a filter, like gain, opacity or blur. Press to turn the filter on or off.",
+			"Controllers": [
+				"Encoder"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/encoder/filter-key"
+				}
+			],
+			"Encoder": {
+				"layout": "layouts/dial.json",
+				"Icon": "images/encoder/filter",
+				"TriggerDescription": {
+					"Rotate": "Change value",
+					"Push": "Filter on or off",
+					"Touch": "Filter on or off"
+				}
+			}
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.sourceanimation",
+			"Name": "Source Animation",
+			"Icon": "images/actions/animation",
+			"Tooltip": "Move, scale, rotate or crop a source in phases. Record the change in OBS and the plugin fills in the numbers.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/animation",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/animation-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.browsersource",
+			"Name": "Browser Source",
+			"Icon": "images/actions/browser",
+			"Tooltip": "Refresh a browser source, set its URL, cycle through URLs or show and hide it.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/browser",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.droppedframes",
+			"Name": "Dropped Frames Alarm",
+			"Icon": "images/actions/dropped",
+			"Tooltip": "Shows dropped, skipped or missed frames and flashes when the number goes up. Press to stop the alarm.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/dropped",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.cpuusage",
+			"Name": "OBS CPU Usage",
+			"Icon": "images/actions/cpu",
+			"Tooltip": "Shows how much CPU OBS uses.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/cpu",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.monitorset",
+			"Name": "Source Monitor Set",
+			"Icon": "images/actions/monitor",
+			"Tooltip": "Set how an audio source is monitored: off, monitor only, or monitor and output.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/monitor",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				},
+				{
+					"Image": "images/keys/monitor-on",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.profile",
+			"Name": "Profile / Scene Collection",
+			"Icon": "images/actions/collection",
+			"Tooltip": "Switch to another OBS profile or scene collection.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/profile",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		},
+		{
+			"UUID": "de.felitendo.obs-tools.focusedwindow",
+			"Name": "Focused Window Capture",
+			"Icon": "images/actions/window",
+			"Tooltip": "Point a Window Capture (Xcomposite) source at the window that has focus. Needs OBS on X11.",
+			"Controllers": [
+				"Keypad"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"States": [
+				{
+					"Image": "images/keys/window",
+					"TitleAlignment": "bottom",
+					"FontSize": 11
+				}
+			]
+		}
+	]
+}

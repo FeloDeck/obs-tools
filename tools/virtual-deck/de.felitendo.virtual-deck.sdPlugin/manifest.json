@@ -1,0 +1,12 @@
+{
+	"Name": "Virtual Stream Deck",
+	"Description": "A Stream Deck in your browser, for testing plugins without hardware.",
+	"Author": "Felitendo",
+	"Version": "0.1.0",
+	"Icon": "icon",
+	"Category": "Virtual Stream Deck",
+	"CodePath": "main.js",
+	"DeviceNamespace": "vd",
+	"OS": [{ "Platform": "linux" }],
+	"Actions": []
+}

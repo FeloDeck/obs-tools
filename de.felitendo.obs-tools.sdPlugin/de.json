@@ -1,0 +1,132 @@
+{
+	"Name": "OBS Tools",
+	"Description": "Erweiterte OBS-Werkzeuge für OpenDeck unter Linux: smarter Szenenwechsel mit Vorschau, Quellen-Animationen, Instant Replay, Videoplayer, Alarm bei Frame-Verlust und mehr.",
+	"de.felitendo.obs-tools.recordtoggle": {
+		"Name": "Aufnahme an/aus",
+		"Tooltip": "Aufnahme starten, stoppen oder pausieren, auf diesem PC oder in einem anderen OBS im Netzwerk."
+	},
+	"de.felitendo.obs-tools.streamtoggle": {
+		"Name": "Stream an/aus",
+		"Tooltip": "Stream starten oder stoppen, auf diesem PC oder in einem anderen OBS im Netzwerk."
+	},
+	"de.felitendo.obs-tools.smartscene": {
+		"Name": "Smarter Szenenwechsel",
+		"Tooltip": "Szene wechseln. Im Studiomodus: erster Druck in die Vorschau, zweiter live. Zeigt ein Live-Bild mit rotem (live) oder grünem (Vorschau) Rahmen."
+	},
+	"de.felitendo.obs-tools.mutetoggle": {
+		"Name": "Quelle stummschalten",
+		"Tooltip": "Eine Audioquelle stumm- oder lautschalten."
+	},
+	"de.felitendo.obs-tools.sourcevisibility": {
+		"Name": "Quelle ein-/ausblenden",
+		"Tooltip": "Eine Quelle in einer Szene ein- oder ausblenden."
+	},
+	"de.felitendo.obs-tools.instantreplay": {
+		"Name": "Instant Replay",
+		"Tooltip": "Drücken speichert den Wiederholungspuffer, spielt ihn im Stream ab und erstellt einen Twitch-Clip. Halten schaltet den Puffer an oder aus."
+	},
+	"de.felitendo.obs-tools.sourcevolume": {
+		"Name": "Quellen-Lautstärke",
+		"Tooltip": "Lautstärke einer Audioquelle lauter, leiser oder auf einen Wert stellen, mit Live-Pegelanzeige. Halten macht weiter."
+	},
+	"de.felitendo.obs-tools.inputvolume": {
+		"Name": "Lautstärke (Drehregler)",
+		"Tooltip": "Drehen ändert die Lautstärke einer Audioquelle, mit Live-Pegelanzeige. Drücken oder Antippen schaltet stumm."
+	},
+	"de.felitendo.obs-tools.scenedial": {
+		"Name": "Szene (Drehregler)",
+		"Tooltip": "Drehen wählt eine Szene (mit Bild), Drücken wechselt."
+	},
+	"de.felitendo.obs-tools.studiomode": {
+		"Name": "Studiomodus an/aus",
+		"Tooltip": "Studiomodus ein- oder ausschalten."
+	},
+	"de.felitendo.obs-tools.previousscene": {
+		"Name": "Letzte Szene",
+		"Tooltip": "Zurück zur Szene, die davor live war. Zeigt ihren Namen."
+	},
+	"de.felitendo.obs-tools.nextscene": {
+		"Name": "Nächste Szene",
+		"Tooltip": "Zur nächsten Szene in der Szenenliste oder zur Szene darüber."
+	},
+	"de.felitendo.obs-tools.mediacontrol": {
+		"Name": "Mediensteuerung",
+		"Tooltip": "Abspielen, Pause, Stopp, Neustart oder Springen in einer Medienquelle. Zeigt die Rest- oder die gespielte Zeit."
+	},
+	"de.felitendo.obs-tools.videoplayer": {
+		"Name": "Videoplayer",
+		"Tooltip": "Eine Datei in einer Medienquelle abspielen. Mehrere Tasten können sich eine Quelle teilen, jede mit eigener Datei und eigenem Tempo."
+	},
+	"de.felitendo.obs-tools.imagesource": {
+		"Name": "Bildquelle",
+		"Tooltip": "Ein Bild in einer Bildquelle zeigen. Mehrere Tasten können sich eine Quelle teilen, jede mit eigenem Bild. Kann es nach ein paar Sekunden wieder ausblenden."
+	},
+	"de.felitendo.obs-tools.settext": {
+		"Name": "Text setzen",
+		"Tooltip": "Text einer Textquelle ändern: fester Text, nächste Zeile einer Liste oder ein Zähler, der hoch- oder runterzählt."
+	},
+	"de.felitendo.obs-tools.filtertoggle": {
+		"Name": "Filter an/aus",
+		"Tooltip": "Einen Filter einer Quelle ein- oder ausschalten."
+	},
+	"de.felitendo.obs-tools.streamhealth": {
+		"Name": "Stream-Zustand",
+		"Tooltip": "Bitrate, ausgelassene Frames und ein grünes, gelbes oder rotes Licht für deinen Stream."
+	},
+	"de.felitendo.obs-tools.virtualcam": {
+		"Name": "Virtuelle Kamera an/aus",
+		"Tooltip": "Die virtuelle Kamera von OBS starten oder stoppen."
+	},
+	"de.felitendo.obs-tools.recordtools": {
+		"Name": "Aufnahme-Marker",
+		"Tooltip": "Während der Aufnahme: Kapitelmarke setzen oder eine neue Datei beginnen."
+	},
+	"de.felitendo.obs-tools.screenshot": {
+		"Name": "Screenshot",
+		"Tooltip": "Ein Bild der Live-Szene speichern, oder von einer beliebigen Szene oder Quelle."
+	},
+	"de.felitendo.obs-tools.hotkey": {
+		"Name": "OBS-Hotkey",
+		"Tooltip": "Einen OBS-Hotkey auslösen, über seinen Namen oder die Tasten, die in OBS dafür eingestellt sind."
+	},
+	"de.felitendo.obs-tools.settransition": {
+		"Name": "Übergang festlegen",
+		"Tooltip": "Szenenübergang und seine Dauer festlegen."
+	},
+	"de.felitendo.obs-tools.transitiondial": {
+		"Name": "Übergang (Drehregler)",
+		"Tooltip": "Drehen ändert die Übergangsdauer, Drücken nimmt den nächsten Übergang."
+	},
+	"de.felitendo.obs-tools.filterdial": {
+		"Name": "Filter (Drehregler)",
+		"Tooltip": "Drehen ändert eine Zahl in einem Filter, etwa Verstärkung, Deckkraft oder Unschärfe. Drücken schaltet den Filter an oder aus."
+	},
+	"de.felitendo.obs-tools.sourceanimation": {
+		"Name": "Quellen-Animation",
+		"Tooltip": "Eine Quelle in Phasen verschieben, skalieren, drehen oder zuschneiden. Die Änderung in OBS aufnehmen, das Plugin trägt die Zahlen ein."
+	},
+	"de.felitendo.obs-tools.browsersource": {
+		"Name": "Browserquelle",
+		"Tooltip": "Eine Browserquelle neu laden, ihre URL setzen, URLs durchschalten oder sie ein- und ausblenden."
+	},
+	"de.felitendo.obs-tools.droppedframes": {
+		"Name": "Frame-Verlust-Alarm",
+		"Tooltip": "Zeigt ausgelassene, übersprungene oder verpasste Frames und blinkt, wenn die Zahl steigt. Drücken beendet den Alarm."
+	},
+	"de.felitendo.obs-tools.cpuusage": {
+		"Name": "OBS-CPU-Last",
+		"Tooltip": "Zeigt, wie viel CPU OBS braucht."
+	},
+	"de.felitendo.obs-tools.monitorset": {
+		"Name": "Audioüberwachung festlegen",
+		"Tooltip": "Festlegen, wie eine Audioquelle überwacht wird: aus, nur überwachen oder überwachen und ausgeben."
+	},
+	"de.felitendo.obs-tools.profile": {
+		"Name": "Profil / Szenensammlung",
+		"Tooltip": "Zu einem anderen OBS-Profil oder einer anderen Szenensammlung wechseln."
+	},
+	"de.felitendo.obs-tools.focusedwindow": {
+		"Name": "Aktives Fenster aufnehmen",
+		"Tooltip": "Eine Fensteraufnahme (Xcomposite) auf das Fenster mit dem Fokus richten. Braucht OBS unter X11."
+	}
+}

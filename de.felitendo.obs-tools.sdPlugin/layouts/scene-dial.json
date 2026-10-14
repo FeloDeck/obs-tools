@@ -1,0 +1,10 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/layout.json",
+	"id": "obstools-scene-dial",
+	"items": [
+		{ "key": "title", "type": "text", "rect": [12, 6, 176, 18], "font": { "size": 13, "weight": 600 }, "alignment": "left", "color": "#9A9AA2" },
+		{ "key": "preview", "type": "pixmap", "rect": [12, 28, 96, 60] },
+		{ "key": "name", "type": "text", "rect": [116, 32, 76, 24], "font": { "size": 17, "weight": 700 }, "alignment": "left" },
+		{ "key": "info", "type": "text", "rect": [116, 60, 76, 20], "font": { "size": 13, "weight": 600 }, "alignment": "left", "color": "#9A9AA2" }
+	]
+}

@@ -1,0 +1,10 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/layout.json",
+	"id": "obstools-dial",
+	"items": [
+		{ "key": "title", "type": "text", "rect": [16, 8, 168, 22], "font": { "size": 16, "weight": 600 }, "alignment": "left" },
+		{ "key": "icon", "type": "pixmap", "rect": [16, 38, 40, 40] },
+		{ "key": "value", "type": "text", "rect": [64, 34, 120, 28], "font": { "size": 22, "weight": 600 }, "alignment": "right" },
+		{ "key": "indicator", "type": "bar", "rect": [64, 66, 120, 10], "value": 0, "subtype": 4, "border_w": 0, "bar_bg_c": "#3A3A3A", "bar_fill_c": "#FFFFFF" }
+	]
+}

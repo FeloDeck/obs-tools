@@ -1,0 +1,15 @@
+{
+	"keys": {
+		"0": { "action": "de.felitendo.obs-tools.mutetoggle", "settings": { "input": "Desktop-Audio", "mode": "talk" } },
+		"1": { "action": "de.felitendo.obs-tools.mutetoggle", "settings": { "input": "Desktop-Audio", "mode": "holdMute", "showName": true } },
+		"2": { "action": "de.felitendo.obs-tools.studiomode", "settings": { "mode": "take" } },
+		"3": { "action": "de.felitendo.obs-tools.settext", "settings": { "input": "Title Text", "press": "timer", "timerText": "Live in {t}", "timerLength": "0:03", "timerEnd": "Live!" } },
+		"4": { "action": "de.felitendo.obs-tools.settext", "settings": { "press": "set", "text": "no source" } },
+		"5": { "action": "de.felitendo.obs-tools.sourcevisibility", "settings": { "scene": "Szene", "source": "Title Text", "showName": true } },
+		"6": { "action": "de.felitendo.obs-tools.filtertoggle", "settings": { "source": "Box", "filter": "Look", "showName": true } },
+		"7": { "action": "de.felitendo.obs-tools.monitorset", "settings": { "input": "Clip Player", "showName": true } },
+		"8": { "action": "de.felitendo.obs-tools.hotkey", "settings": { "mode": "name" } },
+		"9": { "action": "de.felitendo.obs-tools.mediacontrol", "settings": { "input": "Clip Player", "operation": "playpause", "hold": "stop", "double": "restart" } },
+		"10": { "action": "de.felitendo.obs-tools.sourcevisibility", "settings": { "scene": "Szene", "source": "Title Text", "mode": "toggle", "hold": "hide", "double": "show" } }
+	}
+}

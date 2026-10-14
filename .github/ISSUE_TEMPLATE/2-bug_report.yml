@@ -1,0 +1,98 @@
+name: 🐛 Bug report
+description: Something does not work as it should.
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: Thanks for taking the time! The more you fill in, the faster it can be fixed.
+- type: checkboxes
+  id: checks
+  attributes:
+    label: Before you start
+    options:
+    - label: I searched the issues and this is not reported yet.
+      required: true
+    - label: I use the latest version.
+      required: true
+- type: textarea
+  id: what
+  attributes:
+    label: What happened?
+    description: What did you do, and what went wrong?
+  validations:
+    required: true
+- type: textarea
+  id: steps
+  attributes:
+    label: Steps to reproduce
+    placeholder: |
+      1.
+      2.
+      3.
+- type: textarea
+  id: expected
+  attributes:
+    label: What did you expect?
+  validations:
+    required: true
+- type: dropdown
+  id: part
+  attributes:
+    label: What is affected?
+    multiple: true
+    options:
+    - Connection to OBS
+    - Settings page of a key
+    - Scene keys and dials
+    - Recording, streaming, replay, virtual camera
+    - Audio (volume, mute, meters)
+    - Sources, filters, media, text
+    - Stream health, CPU, dropped frames
+    - Source animation
+    - Twitch
+    - Icons or how a key looks
+    - Other
+  validations:
+    required: true
+- type: input
+  id: action
+  attributes:
+    label: Action
+    description: The name of the action, as in the OpenDeck list.
+    placeholder: Smart Scene Switcher
+- type: input
+  id: version
+  attributes:
+    label: Version
+    description: Shown on the **Plugins** page of OpenDeck.
+    placeholder: OBS Tools 0.1.0
+  validations:
+    required: true
+- type: input
+  id: apps
+  attributes:
+    label: OpenDeck and OBS
+    description: Their versions, and whether they are Flatpaks.
+    placeholder: OpenDeck 2.14.0, OBS 32.2.2 (Flatpak)
+  validations:
+    required: true
+- type: input
+  id: system
+  attributes:
+    label: System
+    description: Distribution, desktop, and Wayland or X11.
+    placeholder: CachyOS, KDE Plasma 6.4, Wayland
+  validations:
+    required: true
+- type: textarea
+  id: logs
+  attributes:
+    label: Plugin log
+    description: In OpenDeck, go to **Settings** and click **Open logs**. Paste the end of `plugins/de.felitendo.obs-tools.sdPlugin.log`.
+    render: shell
+- type: textarea
+  id: more
+  attributes:
+    label: Anything else?
+    description: Screenshots, videos or anything else that could help.
