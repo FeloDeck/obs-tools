@@ -4,7 +4,7 @@ What each release brings, newest first.
 
 ## v0.1.0
 
-_Not released yet_
+_14 October 2026_
 
 Welcome to OBS Tools for OpenDeck `v0.1.0`! All actions of BarRaider's OBS Tools, rebuilt for OpenDeck on Linux, plus the everyday OBS actions that Linux users miss.
 
