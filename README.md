@@ -54,8 +54,9 @@ make install PLUGINS=~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins
 
 1. In OBS, open **Tools → WebSocket Server Settings** and turn on **Enable WebSocket server**.
 2. In OpenDeck, drag an action from **OBS Tools** onto a key.
+3. In the settings of the key, click **Read port and password from OBS**.
 
-That is all when OBS runs on the same PC. For OBS on another PC, click **Change** next to the connection status at the top of any key's settings. The settings apply to all keys.
+That is all when OBS runs on the same PC. For OBS on another PC, click **Change** next to the connection status at the top of any key's settings, and type its address, port and password. The settings apply to all keys.
 
 If something is wrong, the settings tell you what to do, and the keys show **OBS offline** or **Password?**. When a key shows a warning, its settings say why. A key with a yellow dot still needs its settings.
 

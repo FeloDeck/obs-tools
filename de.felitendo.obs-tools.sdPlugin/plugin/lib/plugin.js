@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { ConnectionManager, DEFAULT_GLOBAL, connectionKey, resolveConnection } from "./connections.js";
+import { ConnectionManager, DEFAULT_GLOBAL, connectionKey, readLocalObsConfig, resolveConnection } from "./connections.js";
 import { pickFile, pickFolder, sessionType } from "./desktop.js";
 import { Twitch } from "./twitch.js";
 import { filterRange, filterValueLabel } from "../actions/dials.js";
@@ -166,11 +166,8 @@ export class Plugin {
 			global: {
 				host: this.globalSettings.host,
 				port: this.globalSettings.port,
-				autoDetect: this.globalSettings.autoDetect !== false,
 				hasPassword: !!this.globalSettings.password,
 			},
-			local: resolved.local ? { path: resolved.local.path, port: resolved.local.port, enabled: resolved.local.enabled, authRequired: resolved.local.authRequired } : null,
-			usingLocal: resolved.source === "local",
 			twitch: this.twitch.status(),
 			session: sessionType(),
 			settings: instance?.settings ?? null,
@@ -209,12 +206,22 @@ export class Plugin {
 				reply({ type: "lists", lists: await this.lists(instance, payload.lists ?? [], payload) });
 				break;
 			case "saveConnection": {
-				const { host, port, password, autoDetect } = payload.settings ?? {};
-				const patch = { host: String(host ?? "").trim() || "127.0.0.1", port: Number(port) || 4455, autoDetect: autoDetect !== false };
+				const { host, port, password } = payload.settings ?? {};
+				const patch = { host: String(host ?? "").trim() || "127.0.0.1", port: Number(port) || 4455 };
 				if (password !== undefined && password !== null) patch.password = password;
 				this.saveGlobal(patch);
 				this.connections.entries.get(connectionKey(this.connections.defaultConfig))?.client.reconnect();
 				reply({ type: "saved" });
+				break;
+			}
+			// Only when the user asks for it: take port and password from OBS on this PC.
+			case "readLocalObs": {
+				const local = readLocalObsConfig();
+				if (local) {
+					this.saveGlobal({ host: "127.0.0.1", port: local.port, password: local.authRequired ? local.password : "" });
+					this.connections.entries.get(connectionKey(this.connections.defaultConfig))?.client.reconnect();
+				}
+				reply({ type: "localObs", found: !!local, port: local?.port, authRequired: local?.authRequired, enabled: local?.enabled });
 				break;
 			}
 			case "testConnection": {

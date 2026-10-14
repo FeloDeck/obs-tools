@@ -111,17 +111,10 @@ test("twitch: IRC lines with tags", () => {
 	assert.equal(normalizeChannel("#Chan "), "chan");
 });
 
-test("connection: local OBS config wins for localhost", () => {
-	const local = { port: 4460, password: "secret", authRequired: true, path: "x" };
-	assert.deepEqual(
-		{ ...resolveConnection({ host: "localhost", password: "typed" }, () => local), local: undefined },
-		{ host: "localhost", port: 4460, password: "secret", source: "local", local: undefined },
-	);
-	const remote = resolveConnection({ host: "192.168.1.5", port: 4455, password: "typed" }, () => local);
-	assert.equal(remote.source, "manual");
-	assert.equal(remote.password, "typed");
-	assert.equal(resolveConnection({ autoDetect: false, password: "typed" }, () => local).password, "typed");
-	assert.equal(resolveConnection({}, () => ({ ...local, authRequired: false })).password, "");
+test("connection: saved settings, never read from OBS by itself", () => {
+	assert.deepEqual(resolveConnection({ host: " localhost ", password: "typed" }), { host: "localhost", port: 4455, password: "typed" });
+	assert.deepEqual(resolveConnection({ host: "192.168.1.5", port: "4460" }), { host: "192.168.1.5", port: 4460, password: "" });
+	assert.deepEqual(resolveConnection({}), { host: "127.0.0.1", port: 4455, password: "" });
 });
 
 test("connection: newest obs-websocket config file is used", () => {

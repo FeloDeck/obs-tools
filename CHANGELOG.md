@@ -22,4 +22,4 @@ Welcome to OBS Tools for OpenDeck `v0.1.0`! All actions of BarRaider's OBS Tools
 - Push to talk, and taking the preview live in studio mode
 - Keys tell you why they failed, and show a yellow dot until they are set up
 - In English and German, following the language of OpenDeck
-- Finds port and password of the local OBS by itself
+- Reads port and password of the local OBS with one click

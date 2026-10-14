@@ -22,7 +22,6 @@ const EASINGS = [
 	["easeInOut", "Smooth"],
 	["back", "Overshoot"],
 ];
-const LOCAL_HOSTS = ["", "localhost", "127.0.0.1", "::1"];
 
 let ws = null;
 let context = "";
@@ -394,7 +393,7 @@ function statusText() {
 	switch (c.status) {
 		case "connected": {
 			// All good: a quiet line, the details only on hover.
-			const detail = c.custom ? t("This key uses another PC") : conn.usingLocal ? t("Settings read from OBS on this PC") : "";
+			const detail = c.custom ? t("This key uses another PC") : "";
 			return { kind: "ok", quiet: true, title: t("Connected to OBS {version}", { version: c.version?.obs ?? "" }).replace(/\s+/g, " ").trim(), hint: where, detail };
 		}
 		case "auth":
@@ -455,7 +454,7 @@ function renderGuide() {
 			{ class: "steps" },
 			h("li", {}, rich(t("Open **OBS** and go to **Tools → WebSocket Server Settings**."))),
 			h("li", {}, rich(t("Turn on **Enable WebSocket server**."))),
-			h("li", {}, t("OBS on this PC? Then you are done. The plugin reads the port and the password by itself.")),
+			h("li", {}, rich(t("OBS on this PC? Click **Read port and password from OBS** below."))),
 			h("li", {}, t("OBS on another PC? Enter its address, port and password below.")),
 		),
 		h("p", { class: "note" }, t("The status at the top turns green as soon as the connection works.")),
@@ -463,19 +462,8 @@ function renderGuide() {
 }
 
 function renderSetup() {
-	const g = conn?.global ?? { host: "127.0.0.1", port: 4455, autoDetect: true };
-	const draft = (ui.setupDraft ??= { host: g.host, port: g.port, password: null, autoDetect: g.autoDetect });
-	const isLocal = LOCAL_HOSTS.includes(String(draft.host ?? "").trim().toLowerCase());
-	const local = conn?.local;
-	const useLocal = draft.autoDetect && isLocal && local;
-	const info = [];
-	if (draft.autoDetect && isLocal) {
-		if (!local) info.push({ kind: "warn", text: t("No OBS settings found on this PC. Start OBS once, or type port and password.") });
-		else {
-			info.push({ kind: "ok", text: t(local.authRequired ? "Found OBS on this PC: port {port}, password read from OBS." : "Found OBS on this PC: port {port}, no password.", { port: local.port }) });
-			if (!local.enabled) info.push({ kind: "warn", text: t("The WebSocket server is off. In OBS: Tools → WebSocket Server Settings → Enable WebSocket server.") });
-		}
-	}
+	const g = conn?.global ?? { host: "127.0.0.1", port: 4455 };
+	const draft = (ui.setupDraft ??= { host: g.host, port: g.port, password: null });
 	const field = (key, attrs) =>
 		h("input", {
 			...attrs,
@@ -488,20 +476,16 @@ function renderSetup() {
 		conn?.connection?.status === "connected" ? null : renderGuide(),
 		// Text, checkboxes and messages line up with the fields.
 		row("", h("div", { class: "note" }, t("These settings apply to all OBS Tools actions."))),
-		row(
-			"",
-			checkbox(draft.autoDetect, t("Read port and password from OBS on this PC"), (on) => ((draft.autoDetect = on), render())),
-		),
-		info.map((m) => row("", h("div", { class: `msg ${m.kind}` }, m.text))),
-		row(t("Host"), field("host", { type: "text", value: draft.host ?? "", placeholder: "127.0.0.1", onchange: () => render() })),
-		row(t("Port"), field("port", { type: "number", value: useLocal ? local.port : draft.port, min: 1, max: 65535, disabled: !!useLocal })),
+		row("", h("div", { class: "buttons" }, h("button", { class: "btn", onclick: readLocalObs }, t("Read port and password from OBS")))),
+		ui.localMsg ? row("", msg(ui.localMsg)) : null,
+		row(t("Host"), field("host", { type: "text", value: draft.host ?? "", placeholder: "127.0.0.1" })),
+		row(t("Port"), field("port", { type: "number", value: draft.port, min: 1, max: 65535 })),
 		row(
 			t("Password"),
 			field("password", {
 				type: "password",
 				value: draft.password ?? "",
-				placeholder: t(useLocal ? "read from OBS" : g.hasPassword ? "unchanged" : "none"),
-				disabled: !!useLocal,
+				placeholder: t(g.hasPassword ? "unchanged" : "none"),
 				autocomplete: "off",
 			}),
 		),
@@ -521,7 +505,18 @@ function renderSetup() {
 
 function setupPayload() {
 	const d = ui.setupDraft;
-	return { host: d.host, port: Number(d.port) || 4455, password: d.password === "" && conn?.global?.hasPassword ? null : d.password, autoDetect: !!d.autoDetect };
+	return { host: d.host, port: Number(d.port) || 4455, password: d.password === "" && conn?.global?.hasPassword ? null : d.password };
+}
+
+// Reads the OBS settings file on this PC, but only when the user clicks the button.
+async function readLocalObs() {
+	const r = await request({ type: "readLocalObs" });
+	if (!r.found) ui.localMsg = { kind: "warn", text: t("No OBS settings found on this PC. Start OBS once, or type port and password.") };
+	else if (!r.enabled) ui.localMsg = { kind: "warn", text: t("The WebSocket server is off. In OBS: Tools → WebSocket Server Settings → Enable WebSocket server.") };
+	else ui.localMsg = { kind: "ok", text: t(r.authRequired ? "Found OBS on this PC: port {port}, password read from OBS." : "Found OBS on this PC: port {port}, no password.", { port: r.port }) };
+	ui.setupMsg = null;
+	ui.setupDraft = null;
+	render();
 }
 
 async function testSetup() {
@@ -537,6 +532,7 @@ async function testSetup() {
 async function saveSetup() {
 	await request({ type: "saveConnection", settings: setupPayload() });
 	ui.setupMsg = { kind: "ok", text: t("Saved. Connecting…") };
+	ui.localMsg = null;
 	ui.setupDraft = null;
 	render();
 }

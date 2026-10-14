@@ -13,7 +13,6 @@ export const DEFAULT_GLOBAL = {
 	host: "127.0.0.1",
 	port: 4455,
 	password: "",
-	autoDetect: true,
 };
 
 function configHome() {
@@ -49,30 +48,14 @@ export function readLocalObsConfig(paths = localConfigPaths()) {
 	return best;
 }
 
-export function isLocalHost(host) {
-	return ["", "localhost", "127.0.0.1", "::1", "[::1]"].includes(String(host ?? "").trim().toLowerCase());
-}
-
 // Turns the saved settings into the host, port and password to use.
-export function resolveConnection(settings = {}, readLocal = readLocalObsConfig) {
+export function resolveConnection(settings = {}) {
 	const merged = { ...DEFAULT_GLOBAL, ...settings };
-	const result = {
+	return {
 		host: String(merged.host || "127.0.0.1").trim(),
 		port: Number(merged.port) || 4455,
 		password: merged.password ?? "",
-		source: "manual",
-		local: null,
 	};
-	if (merged.autoDetect !== false && isLocalHost(result.host)) {
-		const local = readLocal();
-		result.local = local;
-		if (local) {
-			result.port = local.port;
-			result.password = local.authRequired ? local.password : "";
-			result.source = "local";
-		}
-	}
-	return result;
 }
 
 export function connectionKey({ host, port, password }) {
@@ -87,8 +70,6 @@ export class ConnectionManager extends EventEmitter {
 		this.entries = new Map();
 		this.globalSettings = { ...DEFAULT_GLOBAL };
 		this.defaultConfig = resolveConnection(this.globalSettings);
-		this.watchTimer = setInterval(() => this.checkDefault(), 5000);
-		this.watchTimer.unref?.();
 	}
 
 	setGlobalSettings(settings) {
@@ -96,13 +77,12 @@ export class ConnectionManager extends EventEmitter {
 		this.checkDefault(true);
 	}
 
-	// Local OBS may get a new password or port while we run.
 	checkDefault(force = false) {
 		const next = resolveConnection(this.globalSettings);
 		const changed = connectionKey(next) !== connectionKey(this.defaultConfig);
 		this.defaultConfig = next;
 		if (changed || force) this.emit("default-changed", next);
-		if (changed) this.log(`OBS connection is now ${next.host}:${next.port} (${next.source})`);
+		if (changed) this.log(`OBS connection is now ${next.host}:${next.port}`);
 	}
 
 	// config: null for the default connection, or { host, port, password }.
