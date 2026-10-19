@@ -70,6 +70,9 @@
 2. Bump `VERSION`, run `make manifest` and add the entry at the top of `CHANGELOG.md`, in one commit
    (`chore: 1.4.0`).
 3. Push, then push the tag: `git tag v1.4.0 && git push origin main v1.4.0`.
+4. `make package`, then `gh release create v1.4.0` with the entry from `CHANGELOG.md` and a short
+   install part as notes, and only the plugin file, named `OBS-Tools-v1.4.0.streamDeckPlugin`. Never
+   attach a `.zip` as well: the plugin store of OpenDeck then asks which file to download.
 
 A minor or major release starts with a welcome sentence and has a `### Highlights` list. A patch
 release is just a sentence or two. Write for users: what they notice, not how the code does it.
