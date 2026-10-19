@@ -111,11 +111,6 @@ impl Key {
 		glyph_key(&glyph, &GlyphKey { color, title, ..Default::default() })
 	}
 
-	/// The name of the source (or filter) as title, on keys whose pictures come from the manifest.
-	pub fn show_name_title(&self, name: &str) {
-		self.glyph_for_title(if self.s_truthy("showName") && !name.is_empty() { name } else { "" });
-	}
-
 	/// The manifest pictures have the glyph in the middle. With a title, draw it with the title below.
 	pub fn glyph_for_title(&self, title: &str) {
 		self.own_title(title);

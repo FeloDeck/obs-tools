@@ -1,4 +1,6 @@
+// Outputs: recording, streaming, the virtual camera and the replay buffer.
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
@@ -8,6 +10,7 @@ use crate::js::{self, truthy};
 use crate::media::{PlayOptions, Playback, play_media, wait_for_event};
 use crate::obs_state::Output;
 use crate::render::{GlyphKey, glyph_key};
+use crate::settings::or;
 use crate::time::{format_duration, timecode_seconds};
 use crate::twitch::{ChatMessage, is_allowed};
 use crate::{Error, Res};
@@ -40,6 +43,13 @@ static STREAM: OutputConfig = OutputConfig {
 	toggle: "ToggleStream",
 };
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct OutputSettings {
+	show_timer: bool,
+	timer_at: String,
+}
+
 #[derive(Default)]
 struct OutputState {
 	time: String,
@@ -58,7 +68,7 @@ impl OutputToggle {
 	}
 
 	async fn tick(&self, k: &KeyRc) -> Res<()> {
-		if !k.visible() || !k.s_truthy("showTimer") || !self.active(k) {
+		if !k.visible() || !k.settings::<OutputSettings>().show_timer || !self.active(k) {
 			return Ok(());
 		}
 		let status = k.call(self.0.status_request, json!({})).await?;
@@ -113,31 +123,33 @@ impl Behavior for OutputToggle {
 
 	// The time goes above or below the glyph, so the key draws it into the image.
 	fn render(&self, k: &KeyRc) {
+		let s: OutputSettings = k.settings();
 		let active = self.active(k);
 		k.set_state(if active { 1 } else { 0 });
 		if !active {
 			out(k).time = String::new();
 		}
-		if active && k.s_truthy("showTimer") {
+		if active && s.show_timer {
 			let time = out(k).time.clone();
 			k.own_title(&time);
-			let at = k.s_str("timerAt");
-			k.set_image(&glyph_key(self.0.glyph, &GlyphKey { color: colors::RED, title: &time, title_at: &at, ..Default::default() }));
+			k.set_image(&glyph_key(
+				self.0.glyph,
+				&GlyphKey { color: colors::RED, title: &time, title_at: &s.timer_at, ..Default::default() },
+			));
 		} else {
 			k.reset_image(false);
 		}
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let mode = press.op;
-		if std::ptr::eq(self.0, &RECORD) && mode == "pause" {
+		if std::ptr::eq(self.0, &RECORD) && press.op == "pause" {
 			if self.active(k) {
 				k.call("ToggleRecordPause", json!({})).await?;
 				return Ok(());
 			}
 			return Err("not recording".into());
 		}
-		self.toggle_press(k, &mode).await
+		self.toggle_press(k, &press.op).await
 	}
 }
 
@@ -181,8 +193,7 @@ impl Behavior for VirtualCam {
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let active = k.data().virtualcam.active;
-		let mode = press.op;
-		if mode == "start" || (mode == "toggle" && !active) {
+		if press.op == "start" || (press.op == "toggle" && !active) {
 			if active {
 				return Ok(());
 			}
@@ -222,6 +233,30 @@ pub static VIRTUAL_CAM: Kind = Kind {
 
 // ----- Instant Replay: save the replay buffer (and play it, clip it), or turn it on or off. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct ReplaySettings {
+	/// Play the replay right away, in media_input.
+	auto_replay: bool,
+	media_input: String,
+	/// Empty: the live scene, and no scene switch.
+	replay_scene: String,
+	/// In percent.
+	speed: f64,
+	hide_when_done: bool,
+	return_to_scene: bool,
+	create_clip: bool,
+	post_clip: bool,
+	/// "{url}" becomes the link to the clip.
+	clip_message: String,
+	chat_command: bool,
+	command: String,
+	/// Seconds between two chat replays.
+	cooldown: f64,
+	/// Who may use the chat command.
+	permission: String,
+}
+
 #[derive(Default)]
 struct ReplayState {
 	busy: bool,
@@ -246,15 +281,13 @@ async fn replay(k: &KeyRc) -> Res<()> {
 }
 
 async fn replay_inner(k: &KeyRc) -> Res<()> {
-	let auto_replay = k.s_truthy("autoReplay");
-	let media_input = k.s_truthy("mediaInput");
-	let create_clip = k.s_truthy("createClip");
+	let s: ReplaySettings = k.settings();
 	let buffer_on = k.data().replay.active;
-	if !buffer_on && !create_clip {
+	if !buffer_on && !s.create_clip {
 		return Err("the replay buffer is off".into());
 	}
 	// The clip is made while the replay plays. Its error comes below, where it is awaited.
-	let clip = if create_clip {
+	let clip = if s.create_clip {
 		let k = k.clone();
 		Some(tokio::task::spawn_local(async move { clip(&k).await }))
 	} else {
@@ -269,11 +302,11 @@ async fn replay_inner(k: &KeyRc) -> Res<()> {
 			Err(_) => k.call("GetLastReplayBufferReplay", json!({})).await?.get("savedReplayPath").cloned(),
 		};
 		k.log(&format!("replay saved: {}", js::to_string(path.as_ref())));
-		if let Some(path) = path.filter(|p| truthy(Some(p)))
-			&& auto_replay
-			&& media_input
+		if let Some(path) = path.as_ref().and_then(Value::as_str).filter(|p| !p.is_empty())
+			&& s.auto_replay
+			&& !s.media_input.is_empty()
 		{
-			play(k, path).await?;
+			play(k, &s, path).await?;
 		}
 	}
 	if let Some(clip) = clip {
@@ -283,7 +316,7 @@ async fn replay_inner(k: &KeyRc) -> Res<()> {
 	Ok(())
 }
 
-async fn play(k: &KeyRc, file: Value) -> Res<()> {
+async fn play(k: &KeyRc, s: &ReplaySettings, file: &str) -> Res<()> {
 	let old = replay_state(k).playback.clone();
 	if let Some(old) = old {
 		old.stop().await;
@@ -293,13 +326,13 @@ async fn play(k: &KeyRc, file: Value) -> Res<()> {
 		&client,
 		&state,
 		PlayOptions {
-			input: k.s_val("mediaInput"),
-			file,
-			speed: k.s("speed"),
-			scene: k.s_val("replayScene"),
+			input: s.media_input.clone(),
+			file: file.to_string(),
+			speed: s.speed,
+			scene: s.replay_scene.clone(),
 			show_source: true,
-			hide_when_done: k.s_truthy("hideWhenDone"),
-			return_to_scene: k.s_truthy("returnToScene"),
+			hide_when_done: s.hide_when_done,
+			return_to_scene: s.return_to_scene,
 		},
 	)
 	.await?;
@@ -320,8 +353,9 @@ async fn clip(k: &KeyRc) -> Res<()> {
 	let twitch = plugin.twitch.clone();
 	let url = twitch.create_clip().await?;
 	k.log(&format!("clip created: {url}"));
-	if k.s_truthy("postClip") {
-		let template = if k.s_truthy("clipMessage") { k.s_str("clipMessage") } else { "{url}".into() };
+	let s: ReplaySettings = k.settings();
+	if s.post_clip {
+		let template = if s.clip_message.is_empty() { "{url}" } else { &s.clip_message };
 		let message = template.replace("{url}", &url);
 		let message = if message.contains(&url) { message } else { format!("{message} {url}") };
 		twitch.say(&message).await?;
@@ -333,7 +367,8 @@ async fn clip(k: &KeyRc) -> Res<()> {
 impl Behavior for InstantReplay {
 	// Auto replay needs its media source. Without auto replay the key just saves.
 	fn is_set_up(&self, k: &KeyRc) -> bool {
-		!k.s_truthy("autoReplay") || k.s_truthy("mediaInput")
+		let s: ReplaySettings = k.settings();
+		!s.auto_replay || !s.media_input.is_empty()
 	}
 
 	fn render(&self, k: &KeyRc) {
@@ -341,25 +376,26 @@ impl Behavior for InstantReplay {
 	}
 
 	fn wants_chat(&self, k: &KeyRc) -> bool {
-		k.visible() && k.s_truthy("chatCommand")
+		k.visible() && k.settings::<ReplaySettings>().chat_command
 	}
 
 	fn on_chat_message(&self, k: &KeyRc, message: &ChatMessage) {
-		if !k.s_truthy("chatCommand") || !k.online() {
+		let s: ReplaySettings = k.settings();
+		if !s.chat_command || !k.online() {
 			return;
 		}
 		let text = js::trim(&message.text);
 		let word = text.split(js::is_js_space).next().unwrap_or("").to_lowercase();
-		let command = if k.s_truthy("command") { k.s_str("command") } else { "!replay".into() };
-		if word != js::trim(&command).to_lowercase() {
+		let command = if s.command.is_empty() { "!replay" } else { &s.command };
+		if word != js::trim(command).to_lowercase() {
 			return;
 		}
-		if !is_allowed(&message.user, &k.s_str("permission")) {
+		if !is_allowed(&message.user, &s.permission) {
 			return;
 		}
 		let now = js::now();
 		let last = replay_state(k).last_chat;
-		if last != 0 && ((now - last) as f64) < k.s_num_or("cooldown", 0.0) * 1000.0 {
+		if last != 0 && ((now - last) as f64) < or(s.cooldown, 0.0) * 1000.0 {
 			return;
 		}
 		replay_state(k).last_chat = now;
@@ -371,9 +407,8 @@ impl Behavior for InstantReplay {
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let op = press.op;
 		let on = k.data().replay.active;
-		match op.as_str() {
+		match press.op.as_str() {
 			"buffer" => {
 				k.call("ToggleReplayBuffer", json!({})).await?;
 			}
@@ -422,3 +457,16 @@ pub static INSTANT_REPLAY: Kind = Kind {
 	new_state: || Box::new(ReplayState::default()),
 	..Kind::BASE
 };
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<OutputSettings>(&[&RECORD_TOGGLE]);
+		assert_defaults::<OutputSettings>(&[&STREAM_TOGGLE]);
+		assert_defaults::<ReplaySettings>(&[&INSTANT_REPLAY]);
+	}
+}

@@ -14,6 +14,7 @@ use std::any::Any;
 use std::rc::Rc;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 #[cfg(test)]
@@ -168,7 +169,7 @@ pub trait Behavior: Sync {
 	}
 	/// A touch does what a press does, unless touches are off.
 	async fn on_touch_tap(&self, k: &KeyRc) -> Res<()> {
-		if !k.s_truthy("disableTouch") {
+		if !k.settings::<Touch>().disable_touch {
 			return self.on_dial_down(k).await;
 		}
 		Ok(())
@@ -176,6 +177,24 @@ pub trait Behavior: Sync {
 	async fn on_pi_message(&self, _k: &KeyRc, _payload: &Value, _reply: PiReply) -> Res<()> {
 		Ok(())
 	}
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Touch {
+	disable_touch: bool,
+}
+
+/// The setting of keys that can show the name of their source, scene or filter.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ShowName {
+	pub show_name: bool,
+}
+
+/// Is this field of an OBS event this name? For events about the source (or scene, filter) of a key.
+pub fn same_name(data: &Value, field: &str, name: &str) -> bool {
+	data.get(field).and_then(Value::as_str) == Some(name)
 }
 
 /// Makes a map from pairs, for settings patches.

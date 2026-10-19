@@ -32,14 +32,14 @@ impl Key {
 			Some(Value::String(s)) if k.ops.contains(&s.as_str()) => Some(s),
 			_ => None,
 		};
-		let press = pick(self.s(k.press_key)).unwrap_or_else(|| k.ops[0].to_string());
+		let press = pick(self.setting(k.press_key)).unwrap_or_else(|| k.ops[0].to_string());
 		if gesture == Gesture::Press {
 			return press;
 		}
 		if k.press_only.contains(&press.as_str()) {
 			return "none".into();
 		}
-		let value = self.s(gesture.name());
+		let value = self.setting(gesture.name());
 		if gesture == Gesture::Hold && value == Some(Value::from("repeat")) && k.can_repeat {
 			return "repeat".into();
 		}

@@ -91,11 +91,11 @@ pub fn clamp_db(db: f64, allow_boost: bool) -> f64 {
 }
 
 /// Value for SetInputVolume.
-pub fn volume_request(input_name: &Value, db: f64) -> Value {
+pub fn volume_request(input_name: &str, db: f64) -> Value {
 	if db.is_finite() {
-		crate::obj! { "inputName" => input_name.clone(), "inputVolumeDb" => crate::js::num(round(db * 100.0) / 100.0) }
+		crate::obj! { "inputName" => input_name, "inputVolumeDb" => crate::js::num(round(db * 100.0) / 100.0) }
 	} else {
-		crate::obj! { "inputName" => input_name.clone(), "inputVolumeMul" => 0 }
+		crate::obj! { "inputName" => input_name, "inputVolumeMul" => 0 }
 	}
 }
 
@@ -137,8 +137,8 @@ mod tests {
 		assert_eq!(step_volume(f64::NEG_INFINITY, "db", 2.0, 1.0, false), -60.0, "up from silence starts at -60 dB");
 		assert_eq!(step_volume(-99.0, "db", 2.0, -1.0, false), f64::NEG_INFINITY);
 		near(db_to_fader(step_volume(-12.0, "percent", 10.0, 1.0, false)), db_to_fader(-12.0) + 0.1, 1e-9);
-		assert_eq!(volume_request(&json!("Mic"), f64::NEG_INFINITY), json!({ "inputName": "Mic", "inputVolumeMul": 0 }));
-		assert_eq!(volume_request(&json!("Mic"), -6.123), json!({ "inputName": "Mic", "inputVolumeDb": -6.12 }));
+		assert_eq!(volume_request("Mic", f64::NEG_INFINITY), json!({ "inputName": "Mic", "inputVolumeMul": 0 }));
+		assert_eq!(volume_request("Mic", -6.123), json!({ "inputName": "Mic", "inputVolumeDb": -6.12 }));
 		assert_eq!(read_db(&json!({ "inputVolumeDb": null, "inputVolumeMul": 0 })), f64::NEG_INFINITY);
 		assert_eq!(format_volume(-6.0, "db"), "-6.0 dB");
 		assert_eq!(format_volume(f64::NEG_INFINITY, "db"), "-inf dB");

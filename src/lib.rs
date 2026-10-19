@@ -19,6 +19,7 @@ pub mod pi;
 pub mod plugin;
 pub mod render;
 pub mod sd;
+pub mod settings;
 pub mod time;
 pub mod timers;
 pub mod twitch;

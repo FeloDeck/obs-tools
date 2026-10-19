@@ -3,18 +3,20 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::task::spawn_local;
 
 use crate::actions::{Appearance, Controller, Key, KeyRc, Kind, PiReply};
 use crate::connections::{
-	ConnectionManager, Resolved, connection_key, default_global, local_config_paths, read_local_obs_config, resolve_connection,
+	ConnectionManager, Global, Resolved, connection_key, default_global, local_config_paths, read_local_obs_config, resolve_connection,
 };
 use crate::desktop::{pick_file, pick_folder, session_type};
 use crate::js::{self, truthy};
 use crate::lists::lists;
 use crate::obs::Status;
 use crate::sd::Sd;
+use crate::settings;
 use crate::twitch::Twitch;
 
 /// What happened to a key.
@@ -179,7 +181,7 @@ impl Plugin {
 		let instance = self.instance_for(e)?;
 		if let Some(settings) = e.settings.as_ref().filter(|s| truthy(Some(s))) {
 			let merged = Value::Object(instance.with_defaults(Some(settings)));
-			if !js::same(&merged, &Value::Object(instance.settings())) {
+			if !js::same(&merged, &Value::Object(instance.settings_map())) {
 				instance.update_settings(Some(settings));
 			}
 		}
@@ -298,7 +300,7 @@ impl Plugin {
 			},
 			"twitch": self.twitch.status(),
 			"session": session_type(),
-			"settings": instance.as_ref().map_or(Value::Null, |i| Value::Object(i.settings())),
+			"settings": instance.as_ref().map_or(Value::Null, |i| Value::Object(i.settings_map())),
 			"keyError": instance.as_ref().and_then(|i| i.last_error()).map_or(Value::Null, Value::from),
 		})
 	}
@@ -337,6 +339,7 @@ impl Plugin {
 	async fn on_inspector_message(self: &Rc<Self>, e: &Event, payload: &Value) {
 		let context = e.context.clone();
 		let payload = if payload.is_object() { payload.clone() } else { json!({}) };
+		let m: Message = settings::read_value(&payload);
 		let instance = self.instance_for(e);
 		let sd = self.sd.clone();
 		let request_id = payload.get("requestId").cloned();
@@ -349,25 +352,23 @@ impl Plugin {
 			sd.send_to_property_inspector(&reply_context, Value::Object(data));
 		});
 		self.add_inspector(&context);
-		let get = |key: &str| payload.get(key);
-		match get("type").and_then(Value::as_str).unwrap_or("") {
+		match m.kind.as_str() {
 			"hello" => self.send_state(&context),
 			"getLists" => {
-				let names: Vec<String> = match get("lists") {
-					Some(Value::Array(names)) => names.iter().map(|n| js::to_string(Some(n))).collect(),
-					_ => Vec::new(),
-				};
+				let names: Vec<String> =
+					m.lists.as_array().map_or(Vec::new(), |names| names.iter().map(|n| js::to_string(Some(n))).collect());
 				let lists = lists(instance.as_ref(), &names, &payload).await;
 				reply(json!({ "type": "lists", "lists": lists }));
 			}
 			"saveConnection" => {
-				let settings = js::object(get("settings"));
-				let host = js::trim(&js::str_or_empty(settings.get("host"))).to_string();
+				let c = m.settings;
+				let host = c.host.unwrap_or_default();
+				let host = js::trim(&host);
 				let mut patch = Map::new();
-				patch.insert("host".into(), if host.is_empty() { "127.0.0.1".into() } else { host.into() });
-				patch.insert("port".into(), js::num(js::number_or(settings.get("port"), 4455.0)));
-				if let Some(password) = settings.get("password").filter(|p| !p.is_null()) {
-					patch.insert("password".into(), password.clone());
+				patch.insert("host".into(), if host.is_empty() { "127.0.0.1" } else { host }.into());
+				patch.insert("port".into(), js::num(settings::or(c.port.unwrap_or(0.0), 4455.0)));
+				if let Some(password) = c.password {
+					patch.insert("password".into(), password.into());
 				}
 				self.save_global(patch);
 				self.reconnect_default();
@@ -395,28 +396,9 @@ impl Plugin {
 				}
 				reply(Value::Object(answer));
 			}
+			// Settings typed on the page, not saved yet. Without a new password, the saved one.
 			"testConnection" => {
-				let given = js::object(get("settings"));
-				let mut settings = self.global_settings.borrow().clone();
-				js::assign(&mut settings, &given);
-				if given.get("password").is_none_or(Value::is_null) {
-					match self.global_settings.borrow().get("password") {
-						Some(p) => settings.insert("password".into(), p.clone()),
-						None => settings.remove("password"),
-					};
-				}
-				let resolved = if truthy(get("direct")) {
-					Resolved {
-						host: match settings.get("host") {
-							None => "127.0.0.1".into(),
-							host => js::to_string(host),
-						},
-						port: js::number_or(settings.get("port"), 4455.0),
-						password: js::str_or_empty(settings.get("password")),
-					}
-				} else {
-					resolve_connection(&settings)
-				};
+				let resolved = test_target(m.settings, m.direct, settings::read(&self.global_settings.borrow()));
 				let result = self.connections.test(&resolved, 4000).await;
 				let mut answer = Map::new();
 				answer.insert("type".into(), "testResult".into());
@@ -432,31 +414,27 @@ impl Plugin {
 				reply(Value::Object(answer));
 			}
 			"pickFile" => {
-				let title = |fallback: &str| if get("title").is_none() { fallback.to_string() } else { js::to_string(get("title")) };
-				let start = js::str_or_empty(get("start"));
-				let picked = if truthy(get("folder")) {
-					pick_folder(&title("Choose a folder"), &start).await
+				let picked = if m.folder {
+					pick_folder(m.title.as_deref().unwrap_or("Choose a folder"), &m.start).await
 				} else {
-					pick_file(&title("Choose a file"), &start, truthy(get("images"))).await
+					pick_file(m.title.as_deref().unwrap_or("Choose a file"), &m.start, m.images).await
 				};
-				let key = get("key").cloned().unwrap_or(Value::Null);
 				match picked {
-					Ok(file) => reply(json!({ "type": "pickedFile", "key": key, "file": file })),
-					Err(error) => reply(json!({ "type": "pickedFile", "key": key, "file": null, "error": error.message() })),
+					Ok(file) => reply(json!({ "type": "pickedFile", "key": m.key, "file": file })),
+					Err(error) => reply(json!({ "type": "pickedFile", "key": m.key, "file": null, "error": error.message() })),
 				}
 			}
 			"openUrl" => {
-				let url = js::str_or_empty(get("url"));
-				if url.starts_with("http://") || url.starts_with("https://") {
-					self.sd.open_url(&url);
+				if m.url.starts_with("http://") || m.url.starts_with("https://") {
+					self.sd.open_url(&m.url);
 				}
 			}
 			"twitchSave" => {
 				let mut twitch = js::object(self.global_settings.borrow().get("twitch"));
-				twitch.insert("channel".into(), js::trim(&js::str_or_empty(get("channel"))).into());
+				twitch.insert("channel".into(), js::trim(&m.channel).into());
 				self.save_global(crate::actions::patch(vec![("twitch", Value::Object(twitch))]));
 			}
-			"twitchDeviceFlow" => match self.twitch.start_device_flow(get("clientId")).await {
+			"twitchDeviceFlow" => match self.twitch.start_device_flow(&m.client_id).await {
 				Ok(flow) => {
 					self.sd.open_url(&js::to_string(Some(&flow.uri)));
 					reply(json!({ "type": "twitchFlow", "userCode": flow.user_code, "uri": flow.uri }));
@@ -464,7 +442,7 @@ impl Plugin {
 				Err(error) => reply(json!({ "type": "twitchError", "message": error.message() })),
 			},
 			"twitchToken" => {
-				if let Err(error) = self.twitch.use_token(get("token"), "", "").await {
+				if let Err(error) = self.twitch.use_token(&m.token, "", "").await {
 					reply(json!({ "type": "twitchError", "message": error.message() }));
 				}
 			}
@@ -474,14 +452,90 @@ impl Plugin {
 				let Some(instance) = instance else { return };
 				if let Err(error) = instance.pi_message(&payload, reply.clone()).await {
 					instance.log(&format!("settings page: {error}"));
-					reply(json!({ "type": "error", "for": get("type").cloned().unwrap_or(Value::Null), "message": error.message() }));
+					reply(
+						json!({ "type": "error", "for": payload.get("type").cloned().unwrap_or(Value::Null), "message": error.message() }),
+					);
 				}
 			}
 		}
 	}
 }
 
+/// A message of a settings page. Each type uses a part of the fields.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Message {
+	#[serde(rename = "type")]
+	kind: String,
+	/// getLists: the names of the lists.
+	lists: Value,
+	/// saveConnection, testConnection: what the user typed.
+	settings: ConnectionFields,
+	/// testConnection: these settings as they are, not resolved like saved ones.
+	direct: bool,
+	/// pickFile
+	title: Option<String>,
+	start: String,
+	folder: bool,
+	images: bool,
+	/// pickFile: given back with the answer, to know which field it is for.
+	key: Value,
+	/// openUrl
+	url: String,
+	/// twitchSave
+	channel: String,
+	/// twitchDeviceFlow
+	client_id: String,
+	/// twitchToken
+	token: String,
+}
+
+/// Connection settings from the setup page. None: not sent, or null (keep the saved one).
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ConnectionFields {
+	host: Option<String>,
+	port: Option<f64>,
+	password: Option<String>,
+}
+
+/// Where testConnection connects to: what the user typed, the saved settings for the rest. direct: as
+/// typed (a key with its own OBS), else resolved like the saved settings.
+fn test_target(given: ConnectionFields, direct: bool, saved: Global) -> Resolved {
+	let password = given.password.unwrap_or(saved.password);
+	let (host, port) = (given.host.unwrap_or(saved.host), given.port.unwrap_or(saved.port));
+	if direct {
+		Resolved { host, port: settings::or(port, 4455.0), password }
+	} else {
+		resolve_connection(&Global { host, port, password })
+	}
+}
+
 /// Starts the handling of an event as a task of its own, without waiting for it.
 pub fn dispatch(plugin: &Rc<Plugin>, event: Event) {
 	spawn_local(plugin.clone().on_message(event));
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn a_connection_test_takes_what_was_typed_and_the_saved_rest() {
+		let saved = || Global { host: "10.0.0.2".into(), port: 4460.0, password: "saved".into() };
+		let typed = |v: Value| settings::read_value::<Message>(&json!({ "type": "testConnection", "settings": v })).settings;
+		let r = |host: &str, port: f64, password: &str| Resolved { host: host.into(), port, password: password.into() };
+		// The setup page: null keeps the saved password, an empty host is this PC.
+		assert_eq!(
+			test_target(typed(json!({ "host": "", "port": 4455, "password": null })), false, saved()),
+			r("127.0.0.1", 4455.0, "saved")
+		);
+		assert_eq!(
+			test_target(typed(json!({ "host": " obs.lan ", "port": "4470", "password": "new" })), false, saved()),
+			r("obs.lan", 4470.0, "new")
+		);
+		// A key with its own OBS: as typed.
+		assert_eq!(test_target(typed(json!({ "host": "pc2", "port": 0, "password": "" })), true, saved()), r("pc2", 4455.0, ""));
+		assert_eq!(test_target(typed(json!({})), true, saved()), r("10.0.0.2", 4460.0, "saved"));
+	}
 }

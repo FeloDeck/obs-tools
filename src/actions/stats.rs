@@ -1,6 +1,8 @@
+// Stats: OBS CPU usage, dropped frames and stream health.
 use std::rc::Rc;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
@@ -9,6 +11,7 @@ use crate::i18n::{num, t, t_with};
 use crate::icons::colors;
 use crate::js::{self, truthy};
 use crate::render::{StatKey, is_color, stat_key};
+use crate::settings::{or, read};
 use crate::time::{format_duration, timecode_seconds};
 
 /// Every stats key: polls the stats of OBS while it is shown.
@@ -51,6 +54,14 @@ fn unsubscribe<S: StatsKey>(k: &KeyRc) {
 
 // ----- OBS CPU Usage -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct CpuSettings {
+	/// Percent from which the key turns red, 0 for never.
+	warn_at: f64,
+	show_memory: bool,
+}
+
 #[derive(Default)]
 struct CpuState {
 	sub: StatsSubscription,
@@ -87,15 +98,11 @@ impl Behavior for CpuUsage {
 
 	fn render(&self, k: &KeyRc) {
 		let Some(stats) = k.own::<CpuState>().stats.clone() else { return };
+		let s: CpuSettings = k.settings();
 		let cpu = js::number_or(stats.get("cpuUsage"), 0.0);
-		let warn_at = k.s_num("warnAt");
-		let warn = warn_at > 0.0 && cpu >= warn_at;
+		let warn = s.warn_at > 0.0 && cpu >= s.warn_at;
 		let value = format!("{}%", num(cpu, if cpu >= 100.0 { 0 } else { 1 }));
-		let sub = if k.s_truthy("showMemory") {
-			format!("{} MB", js::fmt(js::round(js::number(stats.get("memoryUsage")))))
-		} else {
-			String::new()
-		};
+		let sub = if s.show_memory { format!("{} MB", js::fmt(js::round(js::number(stats.get("memoryUsage"))))) } else { String::new() };
 		let label = t("OBS CPU");
 		k.set_image(&stat_key(&StatKey {
 			label: &label,
@@ -119,6 +126,17 @@ pub static CPU_USAGE: Kind = Kind {
 };
 
 // ----- Dropped Frames Alarm: shows the frame count and flashes when it goes up. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct DroppedSettings {
+	/// "dropped" (network), "skipped" (encoder) or "missed" (render).
+	frame_type: String,
+	/// How many more frames start the alarm.
+	threshold: f64,
+	alert_color: String,
+	alert_seconds: f64,
+}
 
 /// The count and the total, or nothing (not live).
 type Frames = Option<(Option<f64>, Option<f64>)>;
@@ -180,9 +198,10 @@ impl StatsKey for DroppedFrames {
 	}
 
 	fn on_stats(k: &KeyRc, stats: &Value) {
-		let kind = frame_type(&k.s_str("frameType"));
-		let threshold = js::max(1.0, k.s_num_or("threshold", 1.0));
-		let alert_seconds = js::max(1.0, k.s_num_or("alertSeconds", 10.0));
+		let settings: DroppedSettings = k.settings();
+		let kind = frame_type(&settings.frame_type);
+		let threshold = js::max(1.0, or(settings.threshold, 1.0));
+		let alert_seconds = js::max(1.0, or(settings.alert_seconds, 10.0));
 		{
 			let mut s = dropped(k);
 			match (kind.read)(stats) {
@@ -228,7 +247,7 @@ impl Behavior for DroppedFrames {
 	}
 
 	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
-		if old.get("frameType") != k.s("frameType").as_ref() {
+		if read::<DroppedSettings>(old).frame_type != k.settings::<DroppedSettings>().frame_type {
 			let mut s = dropped(k);
 			s.baseline = None;
 			s.alert_until = 0.0;
@@ -237,18 +256,17 @@ impl Behavior for DroppedFrames {
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let frame = k.s_str("frameType");
-		let kind = frame_type(&frame);
+		let s: DroppedSettings = k.settings();
+		let kind = frame_type(&s.frame_type);
 		let (count, total, alert_until, flash) = {
-			let s = dropped(k);
-			(s.count, s.total, s.alert_until, s.flash)
+			let d = dropped(k);
+			(d.count, d.total, d.alert_until, d.flash)
 		};
 		let alerting = alert_until > js::now() as f64;
-		let color = k.s_str("alertColor");
-		let color = if is_color(&color) { color } else { colors::RED.to_string() };
+		let color = if is_color(&s.alert_color) { s.alert_color.as_str() } else { colors::RED };
 		let label = t(kind.label);
 		let Some(count) = count else {
-			let sub = if frame == "dropped" { t("not live") } else { String::new() };
+			let sub = if s.frame_type == "dropped" { t("not live") } else { String::new() };
 			k.set_image(&stat_key(&StatKey { label: &label, value: "-", sub: &sub, ..Default::default() }));
 			return;
 		};
@@ -260,7 +278,7 @@ impl Behavior for DroppedFrames {
 			label: &label,
 			value: &value,
 			sub: &sub,
-			alert: if alerting && flash { Some(&color) } else { None },
+			alert: if alerting && flash { Some(color) } else { None },
 			..Default::default()
 		}));
 	}
@@ -287,6 +305,16 @@ pub static DROPPED_FRAMES: Kind = Kind {
 };
 
 // ----- Stream Health: bitrate (or time), recent drops, and a green, yellow or red light. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct HealthSettings {
+	/// "bitrate" or "time".
+	show: String,
+	/// Percent of dropped frames for yellow and for red.
+	warn_drops: f64,
+	bad_drops: f64,
+}
 
 fn format_bitrate(kbps: Option<f64>) -> String {
 	match kbps {
@@ -328,8 +356,8 @@ impl StatsKey for StreamHealth {
 	}
 
 	fn on_stats(k: &KeyRc, stats: &Value) {
-		let warn = k.s_num_or("warnDrops", 1.0);
-		let bad = k.s_num_or("badDrops", 5.0);
+		let settings: HealthSettings = k.settings();
+		let (warn, bad) = (or(settings.warn_drops, 1.0), or(settings.bad_drops, 5.0));
 		{
 			let stream = stats.get("stream");
 			let get = |key: &str| stream.and_then(|s| s.get(key));
@@ -388,7 +416,7 @@ impl Behavior for StreamHealth {
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let show_time = k.s_str("show") == "time";
+		let show_time = k.settings::<HealthSettings>().show == "time";
 		let (label, value, sub, dot) = {
 			let s = health(k);
 			let Some(h) = &s.health else {
@@ -430,3 +458,16 @@ pub static STREAM_HEALTH: Kind = Kind {
 	new_state: || Box::new(HealthState::default()),
 	..Kind::BASE
 };
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<CpuSettings>(&[&CPU_USAGE]);
+		assert_defaults::<DroppedSettings>(&[&DROPPED_FRAMES]);
+		assert_defaults::<HealthSettings>(&[&STREAM_HEALTH]);
+	}
+}

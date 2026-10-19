@@ -1,13 +1,15 @@
 // Set Text: a fixed text, the next line of a list, a counter or a timer. Press, hold and double press
 // can each do any of these (TEXT_ACTIONS).
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, Gesture, KeyRc, Kind, Press, Stop, defaults, patch};
+use super::{Behavior, Gesture, KeyRc, Kind, Press, Stop, defaults, patch, same_name};
 use crate::Res;
 use crate::icons::colors;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::render::{GlyphKey, glyph_key};
+use crate::settings::{or, read};
 use crate::time::{format_duration, parse_duration};
 
 pub static TEXT_ACTIONS: &[&str] = &["none", "set", "toggle", "next", "previous", "first", "up", "down", "reset", "timer", "clear"];
@@ -47,6 +49,50 @@ pub fn text_uses(settings: &Map<String, Value>, kind: &str) -> bool {
 
 // ----- the key -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct TextSettings {
+	input: String,
+	text: String,
+	/// One line per entry, for next, previous and first.
+	lines: String,
+	/// The line set last, -1 for none yet.
+	index: f64,
+	/// The counter text: "{n}" becomes the number.
+	template: String,
+	start: f64,
+	count: f64,
+	step: f64,
+	/// "{t}" becomes the time left.
+	timer_text: String,
+	timer_length: String,
+	timer_end: String,
+	/// What was set last: "text", "line", "count", "timer" or "cleared".
+	shown: String,
+	show_text: bool,
+}
+
+impl TextSettings {
+	fn lines(&self) -> Vec<String> {
+		self.lines.split('\n').map(|l| l.trim_end_matches(js::is_js_space).to_string()).filter(|l| !l.is_empty()).collect()
+	}
+
+	fn counter_text(&self, count: f64) -> String {
+		let template = if self.template.is_empty() { "{n}" } else { &self.template };
+		if template.contains("{n}") { template.replace("{n}", &js::fmt(count)) } else { format!("{template}{}", js::fmt(count)) }
+	}
+
+	/// The timer text: "{t}" becomes the time left. At 0 the end text, if there is one.
+	fn timer_text(&self, seconds: f64) -> String {
+		if seconds <= 0.0 && !self.timer_end.is_empty() {
+			return self.timer_end.clone();
+		}
+		let template = if self.timer_text.is_empty() { "{t}" } else { &self.timer_text };
+		let time = format_duration(seconds);
+		if template.contains("{t}") { template.replace("{t}", &time) } else { format!("{template}{time}") }
+	}
+}
+
 #[derive(Default)]
 struct TextState {
 	text_on: bool,
@@ -60,67 +106,45 @@ fn text_state(k: &KeyRc) -> std::cell::RefMut<'_, TextState> {
 	k.own::<TextState>()
 }
 
-fn lines(k: &KeyRc) -> Vec<String> {
-	k.s_str("lines").split('\n').map(|l| l.trim_end_matches(js::is_js_space).to_string()).filter(|l| !l.is_empty()).collect()
-}
-
-fn counter_text(k: &KeyRc, count: f64) -> String {
-	let template = if k.s_truthy("template") { k.s_str("template") } else { "{n}".into() };
-	if template.contains("{n}") { template.replace("{n}", &js::fmt(count)) } else { format!("{template}{}", js::fmt(count)) }
-}
-
-/// The timer text: "{t}" becomes the time left. At 0 the end text, if there is one.
-fn timer_text(k: &KeyRc, seconds: f64) -> String {
-	let end = k.s_str("timerEnd");
-	if seconds <= 0.0 && !end.is_empty() {
-		return end;
-	}
-	let template = if k.s_truthy("timerText") { k.s_str("timerText") } else { "{t}".into() };
-	let time = format_duration(seconds);
-	if template.contains("{t}") { template.replace("{t}", &time) } else { format!("{template}{time}") }
-}
-
 /// What the key shows: what was set last, or what a press would set.
-fn preview(k: &KeyRc) -> String {
-	let shown = k.s_str("shown");
-	let kind = if !shown.is_empty() { shown } else { text_kind(&k.gesture(Gesture::Press)).unwrap_or("").to_string() };
-	match kind.as_str() {
-		"count" => counter_text(k, k.s_num_or("count", 0.0)),
+fn preview(k: &KeyRc, s: &TextSettings) -> String {
+	let kind = if s.shown.is_empty() { text_kind(&k.gesture(Gesture::Press)).unwrap_or("") } else { s.shown.as_str() };
+	match kind {
+		"count" => s.counter_text(or(s.count, 0.0)),
 		"timer" => {
 			let left = text_state(k).time_left;
-			timer_text(k, left.unwrap_or_else(|| parse_duration(&k.s_str("timerLength"))))
+			s.timer_text(left.unwrap_or_else(|| parse_duration(&s.timer_length)))
 		}
 		"line" => {
-			let index = k.s_num("index");
-			let lines = lines(k);
-			if index >= 0.0 && index.fract() == 0.0 { lines.get(index as usize).cloned().unwrap_or_default() } else { String::new() }
+			let lines = s.lines();
+			if s.index >= 0.0 && s.index.fract() == 0.0 { lines.get(s.index as usize).cloned().unwrap_or_default() } else { String::new() }
 		}
-		"text" => k.s_str("text"),
+		"text" => s.text.clone(),
 		_ => String::new(),
 	}
 }
 
 // Text on or off: the key is white while the source has this key's text, else gray.
 fn uses_toggle(k: &KeyRc) -> bool {
-	let settings = k.settings();
+	let settings = k.settings_map();
 	Gesture::ALL.iter().any(|g| text_gesture(&settings, *g) == "toggle")
 }
 
 async fn read_toggle(k: &KeyRc) {
-	if !uses_toggle(k) || !k.s_truthy("input") {
+	let s: TextSettings = k.settings();
+	if !uses_toggle(k) || s.input.is_empty() {
 		return;
 	}
-	let text = k.s_val("text");
-	let on = match k.call("GetInputSettings", json!({ "inputName": k.s_val("input") })).await {
-		Ok(r) => truthy(Some(&text)) && r.get("inputSettings").and_then(|s| s.get("text")) == Some(&text),
+	let on = match k.call("GetInputSettings", json!({ "inputName": s.input })).await {
+		Ok(r) => !s.text.is_empty() && r.get("inputSettings").and_then(|t| t.get("text")).and_then(Value::as_str) == Some(s.text.as_str()),
 		Err(_) => false,
 	};
 	text_state(k).text_on = on;
 }
 
 async fn set_text(k: &KeyRc, text: &str) -> Res<()> {
-	let input = k.s_val("input");
-	if !truthy(Some(&input)) {
+	let input = k.settings::<TextSettings>().input;
+	if input.is_empty() {
 		return Err("no text source selected".into());
 	}
 	k.call("SetInputSettings", json!({ "inputName": input, "inputSettings": { "text": text }, "overlay": true })).await?;
@@ -128,13 +152,13 @@ async fn set_text(k: &KeyRc, text: &str) -> Res<()> {
 }
 
 async fn set_count(k: &KeyRc, count: f64) -> Res<()> {
-	set_text(k, &counter_text(k, count)).await?;
+	set_text(k, &k.settings::<TextSettings>().counter_text(count)).await?;
 	k.save_settings(patch(vec![("count", js::num(count))]));
 	Ok(())
 }
 
 async fn set_line(k: &KeyRc, index: f64) -> Res<()> {
-	let lines = lines(k);
+	let lines = k.settings::<TextSettings>().lines();
 	if lines.is_empty() {
 		return Err("the list is empty".into());
 	}
@@ -153,7 +177,7 @@ async fn toggle_timer(k: &KeyRc) -> Res<()> {
 		stop();
 		return Ok(());
 	}
-	let length = parse_duration(&k.s_str("timerLength"));
+	let length = parse_duration(&k.settings::<TextSettings>().timer_length);
 	if length == 0.0 {
 		return Err("no timer length set".into());
 	}
@@ -166,7 +190,7 @@ async fn toggle_timer(k: &KeyRc) -> Res<()> {
 			if left != shown.get() {
 				shown.set(left);
 				text_state(&k).time_left = Some(left);
-				set_text(&k, &timer_text(&k, left)).await?;
+				set_text(&k, &k.settings::<TextSettings>().timer_text(left)).await?;
 				k.render();
 			}
 			if left == 0.0 {
@@ -188,40 +212,38 @@ async fn toggle_timer(k: &KeyRc) -> Res<()> {
 }
 
 async fn count(k: &KeyRc, direction: f64) -> Res<()> {
-	let step = k.s_num_or("step", 1.0);
-	set_count(k, js::max(0.0, k.s_num_or("count", 0.0) + direction * step)).await
+	let s: TextSettings = k.settings();
+	set_count(k, js::max(0.0, or(s.count, 0.0) + direction * or(s.step, 1.0))).await
 }
 
 async fn run(k: &KeyRc, what: &str) -> Res<()> {
-	let shown_before = k.s("shown");
+	let s: TextSettings = k.settings();
 	match what {
-		"set" => set_text(k, &k.s_str("text")).await?,
+		"set" => set_text(k, &s.text).await?,
 		// Off when the source shows this text, else on.
 		"toggle" => {
-			let input = k.s_val("input");
-			if !truthy(Some(&input)) {
+			if s.input.is_empty() {
 				return Err("no text source selected".into());
 			}
-			let text = k.s_str("text");
-			let current = k.call("GetInputSettings", json!({ "inputName": input })).await?;
-			let on = !text.is_empty() && current.get("inputSettings").and_then(|s| s.get("text")) == Some(&Value::from(text.as_str()));
-			set_text(k, if on { "" } else { &text }).await?;
+			let current = k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
+			let on = !s.text.is_empty()
+				&& current.get("inputSettings").and_then(|t| t.get("text")).and_then(Value::as_str) == Some(s.text.as_str());
+			set_text(k, if on { "" } else { &s.text }).await?;
 			text_state(k).text_on = !on;
 		}
 		// index -1 means nothing was set yet, so the first "next" sets line 0.
-		"next" => set_line(k, k.s_num_or("index", 0.0) + 1.0).await?,
-		"previous" => set_line(k, k.s_num_or("index", 0.0) - 1.0).await?,
+		"next" => set_line(k, or(s.index, 0.0) + 1.0).await?,
+		"previous" => set_line(k, or(s.index, 0.0) - 1.0).await?,
 		"first" => set_line(k, 0.0).await?,
 		"up" => count(k, 1.0).await?,
 		"down" => count(k, -1.0).await?,
-		"reset" => set_count(k, k.s_num_or("start", 0.0)).await?,
+		"reset" => set_count(k, or(s.start, 0.0)).await?,
 		"timer" => toggle_timer(k).await?,
 		"clear" => set_text(k, "").await?,
 		_ => return Ok(()),
 	}
-	let kind = text_kind(what).map(Value::from);
-	if shown_before != kind {
-		k.save_settings(patch(vec![("shown", kind.unwrap_or(Value::Null))]));
+	if let Some(kind) = text_kind(what).filter(|kind| *kind != s.shown) {
+		k.save_settings(patch(vec![("shown", kind.into())]));
 	}
 	// Hold or double press can change the text too.
 	if what != "toggle" {
@@ -235,16 +257,17 @@ async fn run(k: &KeyRc, what: &str) -> Res<()> {
 impl Behavior for SetText {
 	// Press, hold and double press pick from TEXT_ACTIONS (the base does the rest).
 	fn gesture(&self, k: &KeyRc, gesture: Gesture) -> String {
-		text_gesture(&k.settings(), gesture)
+		text_gesture(&k.settings_map(), gesture)
 	}
 
 	// A new start number puts the counter there.
 	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
-		let start = k.s_num_or("start", 0.0);
-		if js::number_or(old.get("start"), 0.0) != start {
+		let (old, s): (TextSettings, TextSettings) = (read(old), k.settings());
+		let start = or(s.start, 0.0);
+		if or(old.start, 0.0) != start {
 			k.save_settings(patch(vec![("count", js::num(start))]));
 		}
-		if k.online() && (old.get("input") != k.s("input").as_ref() || old.get("text") != k.s("text").as_ref()) {
+		if k.online() && (old.input != s.input || old.text != s.text) {
 			read_toggle(k).await;
 		}
 		Ok(())
@@ -257,12 +280,12 @@ impl Behavior for SetText {
 
 	// The text can also change in OBS or by another key.
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
-		if kind != "InputSettingsChanged" || data.get("inputName") != k.s("input").as_ref() || !uses_toggle(k) {
+		let s: TextSettings = k.settings();
+		if kind != "InputSettingsChanged" || !same_name(data, "inputName", &s.input) || !uses_toggle(k) {
 			return Ok(());
 		}
 		let Some(Value::String(text)) = data.get("inputSettings").and_then(|s| s.get("text")) else { return Ok(()) };
-		let mine = k.s_val("text");
-		text_state(k).text_on = truthy(Some(&mine)) && mine == text.as_str();
+		text_state(k).text_on = !s.text.is_empty() && s.text == *text;
 		self.render(k);
 		Ok(())
 	}
@@ -272,7 +295,8 @@ impl Behavior for SetText {
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let title = if k.s_truthy("showText") { js::trim(preview(k).split('\n').next().unwrap_or("")).to_string() } else { String::new() };
+		let s: TextSettings = k.settings();
+		let title = if s.show_text { js::trim(preview(k, &s).split('\n').next().unwrap_or("")).to_string() } else { String::new() };
 		let off = uses_toggle(k) && !text_state(k).text_on;
 		k.own_title(&title);
 		k.set_image(&glyph_key(
@@ -325,6 +349,12 @@ pub static SET_TEXT: Kind = Kind {
 mod tests {
 	use super::super::testing::*;
 	use super::*;
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<TextSettings>(&[&SET_TEXT]);
+	}
 
 	fn written(k: &KeyRc) -> Vec<String> {
 		calls(k)
@@ -356,9 +386,9 @@ mod tests {
 		mixed.press(Gesture::Double, false).await.unwrap_or_default();
 		assert_eq!(written(&mixed), ["BRB", "One", "1"]);
 		// The key shows what was set last.
-		assert_eq!(preview(&mixed), "1");
+		assert_eq!(preview(&mixed, &mixed.settings()), "1");
 		run(&mixed, "clear").await.unwrap_or_default();
-		assert_eq!(preview(&mixed), "");
+		assert_eq!(preview(&mixed, &mixed.settings()), "");
 		// Unknown values fall back: press sets the text, the others do nothing.
 		let (_p, bogus) = key(&SET_TEXT, json!({ "press": "bogus", "hold": "bogus" }));
 		assert_eq!(bogus.gesture(Gesture::Press), "set");
@@ -368,7 +398,7 @@ mod tests {
 	#[test]
 	fn timer_texts() {
 		let (_p, k) = key(&SET_TEXT, json!({ "timerText": "Live in {t}", "timerEnd": "Live!" }));
-		assert_eq!(timer_text(&k, 65.0), "Live in 1:05");
-		assert_eq!(timer_text(&k, 0.0), "Live!");
+		assert_eq!(k.settings::<TextSettings>().timer_text(65.0), "Live in 1:05");
+		assert_eq!(k.settings::<TextSettings>().timer_text(0.0), "Live!");
 	}
 }

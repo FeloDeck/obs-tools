@@ -1,4 +1,5 @@
 // Source animations: phases of transform changes, played frame by frame inside OBS.
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::js::{self, max, number, round as js_round, truthy};
@@ -179,15 +180,29 @@ pub fn total_duration(phases: &[Value]) -> f64 {
 	phases.iter().map(normalize_phase).fold(0.0, |sum, p| sum + p.delay + p.duration)
 }
 
+/// What happens before and after the phases. Settings of the Source Animation key.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Options {
+	pub show_at_start: bool,
+	pub hide_at_end: bool,
+	/// Back to where the source was before the animation.
+	pub reset_at_end: bool,
+	/// A filter of the source to turn on or off at the start or the end.
+	pub filter: String,
+	/// "enable", "disable" or "none".
+	pub filter_start: String,
+	pub filter_end: String,
+}
+
 pub struct Run<'a> {
-	pub scene_name: Value,
+	pub scene_name: &'a str,
 	pub scene_item_id: Value,
-	pub source_name: Value,
+	pub source_name: &'a str,
 	pub start: Option<&'a Value>,
 	pub phases: &'a [Value],
 	pub fps: f64,
-	/// The settings of the key: filter, filterStart, filterEnd, showAtStart, hideAtEnd, resetAtEnd.
-	pub options: &'a Map<String, Value>,
+	pub options: &'a Options,
 }
 
 fn request(kind: &str, data: Value) -> Value {
@@ -197,12 +212,11 @@ fn request(kind: &str, data: Value) -> Value {
 /// The requests for one run, played by OBS on its own render frames.
 pub fn build_requests(run: &Run) -> (Vec<Value>, usize) {
 	let Frames { fields, steps } = build_frames(run.start, run.phases, run.fps);
-	let options = run.options;
-	let opt = |key: &str| options.get(key);
+	let o = run.options;
 	let mut requests = Vec::new();
 	let item = |extra: (&str, Value)| {
 		let mut data = Map::new();
-		data.insert("sceneName".into(), run.scene_name.clone());
+		data.insert("sceneName".into(), run.scene_name.into());
 		data.insert("sceneItemId".into(), run.scene_item_id.clone());
 		data.insert(extra.0.into(), extra.1);
 		Value::Object(data)
@@ -210,14 +224,14 @@ pub fn build_requests(run: &Run) -> (Vec<Value>, usize) {
 	let filter = |enabled: bool| {
 		request(
 			"SetSourceFilterEnabled",
-			crate::obj! { "sourceName" => run.source_name.clone(), "filterName" => opt("filter").cloned().unwrap_or(Value::Null), "filterEnabled" => enabled },
+			crate::obj! { "sourceName" => run.source_name, "filterName" => o.filter.as_str(), "filterEnabled" => enabled },
 		)
 	};
-	let filter_at = |key: &str| truthy(opt("filter")) && truthy(opt(key)) && opt(key) != Some(&Value::from("none"));
-	if filter_at("filterStart") {
-		requests.push(filter(opt("filterStart") == Some(&Value::from("enable"))));
+	let filter_at = |when: &str| !o.filter.is_empty() && !when.is_empty() && when != "none";
+	if filter_at(&o.filter_start) {
+		requests.push(filter(o.filter_start == "enable"));
 	}
-	if truthy(opt("showAtStart")) {
+	if o.show_at_start {
 		requests.push(request("SetSceneItemEnabled", item(("sceneItemEnabled", Value::Bool(true)))));
 	}
 	for step in &steps {
@@ -229,19 +243,19 @@ pub fn build_requests(run: &Run) -> (Vec<Value>, usize) {
 			}
 		}
 	}
-	if truthy(opt("hideAtEnd")) {
+	if o.hide_at_end {
 		requests.push(request("SetSceneItemEnabled", item(("sceneItemEnabled", Value::Bool(false)))));
 	}
-	if truthy(opt("resetAtEnd")) && !fields.is_empty() {
-		if truthy(opt("hideAtEnd")) {
+	if o.reset_at_end && !fields.is_empty() {
+		if o.hide_at_end {
 			requests.push(request("Sleep", crate::obj! { "sleepFrames" => 1 }));
 		}
 		let reset: Map<String, Value> =
 			fields.iter().map(|f| (f.to_string(), js::num(value(f, js::number_or(field(run.start, f), 0.0))))).collect();
 		requests.push(request("SetSceneItemTransform", item(("sceneItemTransform", Value::Object(reset)))));
 	}
-	if filter_at("filterEnd") {
-		requests.push(filter(opt("filterEnd") == Some(&Value::from("enable"))));
+	if filter_at(&o.filter_end) {
+		requests.push(filter(o.filter_end == "enable"));
 	}
 	(requests, steps.len())
 }
@@ -298,16 +312,18 @@ mod tests {
 	#[test]
 	fn requests_include_start_and_end_options() {
 		let start = json!({ "positionX": 5 });
-		let options = json!({ "showAtStart": true, "hideAtEnd": true, "resetAtEnd": true, "filter": "Blur", "filterStart": "enable", "filterEnd": "disable" });
+		let options = crate::settings::read_value(
+			&json!({ "showAtStart": true, "hideAtEnd": true, "resetAtEnd": true, "filter": "Blur", "filterStart": "enable", "filterEnd": "disable" }),
+		);
 		let phases = vec![json!({ "duration": 100, "changes": { "positionX": 10 } })];
 		let (requests, frames) = build_requests(&Run {
-			scene_name: json!("S"),
+			scene_name: "S",
 			scene_item_id: json!(3),
-			source_name: json!("Box"),
+			source_name: "Box",
 			start: Some(&start),
 			phases: &phases,
 			fps: 30.0,
-			options: options.as_object().unwrap_or(&Map::new()),
+			options: &options,
 		});
 		assert_eq!(frames, 3);
 		let types: Vec<&str> = requests.iter().map(|r| r["requestType"].as_str().unwrap_or("")).collect();

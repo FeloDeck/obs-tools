@@ -1,13 +1,16 @@
+// Sources: animations, media, pictures, browser sources, filters and window capture.
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::basics::scene_name;
-use super::{Behavior, KeyRc, Kind, PiReply, Press, defaults, patch};
+use super::basics::scene_or_live;
+use super::{Behavior, KeyRc, Kind, PiReply, Press, defaults, patch, same_name};
 use crate::Res;
-use crate::animation::{Run, diff_transforms, normalize_phase, run_animation, total_duration};
+use crate::animation::{self, Run, diff_transforms, normalize_phase, run_animation, total_duration};
 use crate::desktop::{active_x11_window, session_type, xcomposite_window_value};
 use crate::js::{self, truthy};
 use crate::media::{PlayOptions, Playback, play_media};
+use crate::settings::or;
 use crate::timers::Timer;
 
 // "/home/me/Videos/Big clip.mp4" -> "Big clip", for a title.
@@ -21,30 +24,43 @@ pub fn file_title(file: &str) -> String {
 	}
 }
 
-async fn scene_item(k: &KeyRc, scene: &Value, source: &Value) -> Res<Value> {
-	if !truthy(Some(scene)) {
-		return Err("no scene".into());
-	}
-	if !truthy(Some(source)) {
+/// The title of keys that play a file: the file name, or the source without a file.
+fn file_or_input(file: &str, input: &str) -> String {
+	let title = file_title(file);
+	if title.is_empty() { input.to_string() } else { title }
+}
+
+async fn scene_item(k: &KeyRc, scene: Option<&str>, source: &str) -> Res<Value> {
+	let Some(scene) = scene.filter(|s| !s.is_empty()) else { return Err("no scene".into()) };
+	if source.is_empty() {
 		return Err("no source selected".into());
 	}
 	match k.call("GetSceneItemId", json!({ "sceneName": scene, "sourceName": source })).await {
 		Ok(r) => Ok(r.get("sceneItemId").cloned().unwrap_or(Value::Null)),
-		Err(_) => Err(format!("\"{}\" is not in scene \"{}\"", js::to_string(Some(source)), js::to_string(Some(scene))).into()),
-	}
-}
-
-fn phases(k: &KeyRc) -> Vec<Value> {
-	match k.s("phases") {
-		Some(Value::Array(list)) => list,
-		_ => Vec::new(),
+		Err(_) => Err(format!("\"{source}\" is not in scene \"{scene}\"").into()),
 	}
 }
 
 // ----- Source Animation: moves, scales, rotates or crops a source in phases. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct AnimationSettings {
+	/// Empty: the live scene.
+	scene: String,
+	source: String,
+	/// [{ duration, delay, easing, changes }]
+	phases: Value,
+}
+
+impl AnimationSettings {
+	fn phases(&self) -> &[Value] {
+		self.phases.as_array().map_or(&[], Vec::as_slice)
+	}
+}
+
 struct Recording {
-	scene: Value,
+	scene: String,
 	item: Value,
 	start: Value,
 }
@@ -65,8 +81,9 @@ async fn animate(k: &KeyRc) -> Res<()> {
 	if anim(k).running {
 		return Ok(());
 	}
-	let source = k.s_val("source");
-	let phases: Vec<Value> = phases(k)
+	let s: AnimationSettings = k.settings();
+	let phases: Vec<Value> = s
+		.phases()
 		.iter()
 		.map(normalize_phase)
 		.filter(|p| p.duration > 0.0 || p.delay > 0.0 || !p.changes.is_empty())
@@ -75,8 +92,9 @@ async fn animate(k: &KeyRc) -> Res<()> {
 	if phases.is_empty() {
 		return Err("the animation has no phases".into());
 	}
-	let scene = scene_name(k, "scene");
-	let item = scene_item(k, &scene, &source).await?;
+	let scene = scene_or_live(k, &s.scene);
+	let item = scene_item(k, scene.as_deref(), &s.source).await?;
+	let scene = scene.unwrap_or_default();
 	let start =
 		k.call("GetSceneItemTransform", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemTransform").cloned();
 	anim(k).running = true;
@@ -87,16 +105,16 @@ async fn animate(k: &KeyRc) -> Res<()> {
 		return Err("no connection".into());
 	};
 	let fps = k.data().fps;
-	let options = k.settings();
+	let options: animation::Options = k.settings();
 	let result = run_animation(
 		&client,
 		&Run {
-			scene_name: scene,
+			scene_name: &scene,
 			scene_item_id: item,
-			source_name: source,
+			source_name: &s.source,
 			start: start.as_ref(),
 			phases: &phases,
-			fps: if js::truthy_num(fps) { fps } else { 30.0 },
+			fps: or(fps, 30.0),
 			options: &options,
 		},
 	)
@@ -119,10 +137,12 @@ impl Behavior for SourceAnimation {
 
 	// The settings page drives recording and import.
 	async fn on_pi_message(&self, k: &KeyRc, message: &Value, reply: PiReply) -> Res<()> {
+		let s: AnimationSettings = k.settings();
 		match message.get("type").and_then(Value::as_str).unwrap_or("") {
 			"recordStart" => {
-				let scene = scene_name(k, "scene");
-				let item = scene_item(k, &scene, &k.s_val("source")).await?;
+				let scene = scene_or_live(k, &s.scene);
+				let item = scene_item(k, scene.as_deref(), &s.source).await?;
+				let scene = scene.unwrap_or_default();
 				let start = k
 					.call("GetSceneItemTransform", json!({ "sceneName": scene, "sceneItemId": item }))
 					.await?
@@ -157,7 +177,7 @@ impl Behavior for SourceAnimation {
 					json!({ "sceneName": recording.scene, "sceneItemId": recording.item, "sceneItemTransform": back }),
 				)
 				.await?;
-				let mut list: Vec<Value> = phases(k).iter().map(|p| normalize_phase(p).to_value()).collect();
+				let mut list: Vec<Value> = s.phases().iter().map(|p| normalize_phase(p).to_value()).collect();
 				let index = list.iter().position(|p| p.get("changes").and_then(Value::as_object).is_none_or(Map::is_empty));
 				let count = changes.len();
 				match index {
@@ -174,7 +194,8 @@ impl Behavior for SourceAnimation {
 			}
 			"preview" => {
 				animate(k).await?;
-				reply(json!({ "type": "previewDone", "duration": js::num(total_duration(&phases(k))) }));
+				let phases = k.settings::<AnimationSettings>().phases;
+				reply(json!({ "type": "previewDone", "duration": js::num(total_duration(phases.as_array().map_or(&[], Vec::as_slice))) }));
 			}
 			_ => {}
 		}
@@ -206,6 +227,23 @@ pub static SOURCE_ANIMATION: Kind = Kind {
 
 // ----- Video Player: one media source, many files. Each key plays its own file. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct VideoSettings {
+	input: String,
+	file: String,
+	/// In percent.
+	speed: f64,
+	/// Empty: the live scene, and no scene switch.
+	scene: String,
+	show_source: bool,
+	hide_when_done: bool,
+	return_to_scene: bool,
+	/// What play does while the file plays: "stop" or "restart".
+	press_again: String,
+	show_name: bool,
+}
+
 #[derive(Default)]
 struct VideoState {
 	playback: Option<Playback>,
@@ -217,40 +255,35 @@ fn video(k: &KeyRc) -> std::cell::RefMut<'_, VideoState> {
 	k.own::<VideoState>()
 }
 
-fn name_or_input(k: &KeyRc, file_key: &str) -> String {
-	let title = file_title(&k.s_str(file_key));
-	if title.is_empty() { k.s_str("input") } else { title }
-}
-
 #[async_trait(?Send)]
 impl Behavior for VideoPlayer {
 	fn render(&self, k: &KeyRc) {
+		let s: VideoSettings = k.settings();
 		let playing = video(k).playback.is_some();
 		k.set_state(if playing { 1 } else { 0 });
-		k.show_name_title(&name_or_input(k, "file"));
+		k.glyph_for_title(&if s.show_name { file_or_input(&s.file, &s.input) } else { String::new() });
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let input = k.s_val("input");
-		if !truthy(Some(&input)) {
+		let s: VideoSettings = k.settings();
+		if s.input.is_empty() {
 			return Err("no media source selected".into());
 		}
-		let op = press.op;
 		let current = video(k).playback.clone();
-		if op == "stop" {
+		if press.op == "stop" {
 			match current {
 				Some(playback) => playback.stop().await,
 				None => {
 					k.call(
 						"TriggerMediaInputAction",
-						json!({ "inputName": input, "mediaAction": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP" }),
+						json!({ "inputName": s.input, "mediaAction": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP" }),
 					)
 					.await?;
 				}
 			}
 			return Ok(());
 		}
-		if op == "play" && current.is_some() && k.s_str("pressAgain") == "stop" && !k.is_in_multi_action() {
+		if press.op == "play" && current.is_some() && s.press_again == "stop" && !k.is_in_multi_action() {
 			if let Some(playback) = current {
 				playback.stop().await;
 			}
@@ -264,13 +297,13 @@ impl Behavior for VideoPlayer {
 			&client,
 			&state,
 			PlayOptions {
-				input,
-				file: k.s_val("file"),
-				speed: k.s("speed"),
-				scene: k.s_val("scene"),
-				show_source: k.s("showSource").is_none() || k.s_truthy("showSource"),
-				hide_when_done: k.s("hideWhenDone").is_none() || k.s_truthy("hideWhenDone"),
-				return_to_scene: k.s_truthy("returnToScene"),
+				input: s.input,
+				file: s.file,
+				speed: s.speed,
+				scene: s.scene,
+				show_source: s.show_source,
+				hide_when_done: s.hide_when_done,
+				return_to_scene: s.return_to_scene,
 			},
 		)
 		.await?;
@@ -325,6 +358,19 @@ pub static VIDEO_PLAYER: Kind = Kind {
 
 // ----- Image Source: one image source, many pictures. Each key shows its own picture. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct ImageSettings {
+	/// Empty: the live scene.
+	scene: String,
+	input: String,
+	/// Empty: the picture the source has.
+	file: String,
+	/// Seconds until the picture hides again, 0 for never.
+	auto_hide: f64,
+	show_name: bool,
+}
+
 #[derive(Default)]
 struct ImageState {
 	showing: bool,
@@ -338,7 +384,7 @@ fn image(k: &KeyRc) -> std::cell::RefMut<'_, ImageState> {
 	k.own::<ImageState>()
 }
 
-async fn hide_image(k: &KeyRc, scene: &Value, item: &Value) -> Res<()> {
+async fn hide_image(k: &KeyRc, scene: &str, item: &Value) -> Res<()> {
 	let timer = image(k).hide_timer.take();
 	if let Some(timer) = timer {
 		timer.clear();
@@ -352,20 +398,22 @@ async fn hide_image(k: &KeyRc, scene: &Value, item: &Value) -> Res<()> {
 #[async_trait(?Send)]
 impl Behavior for ImageSource {
 	fn render(&self, k: &KeyRc) {
+		let s: ImageSettings = k.settings();
 		let showing = image(k).showing;
 		k.set_state(if showing { 1 } else { 0 });
-		k.show_name_title(&name_or_input(k, "file"));
+		k.glyph_for_title(&if s.show_name { file_or_input(&s.file, &s.input) } else { String::new() });
 	}
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
 		// Someone else hid the source or loaded another picture.
+		let s: ImageSettings = k.settings();
 		let mine = image(k).item_id.clone();
 		let hidden = kind == "SceneItemEnableStateChanged"
 			&& mine.is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, &id)))
 			&& !truthy(data.get("sceneItemEnabled"));
 		let other_file = kind == "InputSettingsChanged"
-			&& data.get("inputName") == k.s("input").as_ref()
-			&& data.get("inputSettings").and_then(|s| s.get("file")) != k.s("file").as_ref();
+			&& same_name(data, "inputName", &s.input)
+			&& data.get("inputSettings").and_then(|i| i.get("file")).and_then(Value::as_str) != Some(s.file.as_str());
 		if !hidden && !other_file {
 			return Ok(());
 		}
@@ -382,32 +430,31 @@ impl Behavior for ImageSource {
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let input = k.s_val("input");
-		let file = k.s_val("file");
-		if !truthy(Some(&input)) {
+		let s: ImageSettings = k.settings();
+		if s.input.is_empty() {
 			return Err("no image source selected".into());
 		}
-		let mode = press.op;
-		let scene = scene_name(k, "scene");
-		let item = scene_item(k, &scene, &input).await?;
+		let scene = scene_or_live(k, &s.scene);
+		let item = scene_item(k, scene.as_deref(), &s.input).await?;
+		let scene = scene.unwrap_or_default();
 		image(k).item_id = Some(item.clone());
 		let enabled =
 			truthy(k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemEnabled"));
-		let current =
-			k.call("GetInputSettings", json!({ "inputName": input })).await?.get("inputSettings").and_then(|s| s.get("file")).cloned();
-		let mine = enabled && (!truthy(Some(&file)) || current.as_ref() == Some(&file));
-		if mode == "hide" {
+		let settings = k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
+		let current = settings.get("inputSettings").and_then(|i| i.get("file")).and_then(Value::as_str);
+		let mine = enabled && (s.file.is_empty() || current == Some(s.file.as_str()));
+		if press.op == "hide" {
 			if mine {
 				hide_image(k, &scene, &item).await?;
 			}
 			return Ok(());
 		}
 		// Toggle, pressed again while its picture is up: hide it.
-		if mode == "toggle" && mine && !k.is_in_multi_action() {
+		if press.op == "toggle" && mine && !k.is_in_multi_action() {
 			return hide_image(k, &scene, &item).await;
 		}
-		if truthy(Some(&file)) && current.as_ref() != Some(&file) {
-			k.call("SetInputSettings", json!({ "inputName": input, "inputSettings": { "file": file }, "overlay": true })).await?;
+		if !s.file.is_empty() && current != Some(s.file.as_str()) {
+			k.call("SetInputSettings", json!({ "inputName": s.input, "inputSettings": { "file": s.file }, "overlay": true })).await?;
 		}
 		k.call("SetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item, "sceneItemEnabled": true })).await?;
 		image(k).showing = true;
@@ -416,10 +463,9 @@ impl Behavior for ImageSource {
 		if let Some(timer) = old {
 			timer.clear();
 		}
-		let auto_hide = k.s_num("autoHide");
-		if auto_hide > 0.0 {
+		if s.auto_hide > 0.0 {
 			let weak = std::rc::Rc::downgrade(k);
-			let timer = crate::timers::set_timeout(auto_hide * 1000.0, move || {
+			let timer = crate::timers::set_timeout(s.auto_hide * 1000.0, move || {
 				let Some(k) = weak.upgrade() else { return };
 				tokio::task::spawn_local(async move {
 					if image(&k).showing {
@@ -451,52 +497,59 @@ pub static IMAGE_SOURCE: Kind = Kind {
 
 // ----- Browser Source -----
 
-struct BrowserSource;
-
-fn url_list(k: &KeyRc) -> Vec<String> {
-	k.s_str("urls").split('\n').map(|u| js::trim(u).to_string()).filter(|u| !u.is_empty()).collect()
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct BrowserSettings {
+	input: String,
+	url: String,
+	/// One URL per line, for cycle.
+	urls: String,
+	/// The URL set last by cycle.
+	index: f64,
+	show_name: bool,
 }
+
+struct BrowserSource;
 
 #[async_trait(?Send)]
 impl Behavior for BrowserSource {
 	fn render(&self, k: &KeyRc) {
-		k.show_name_title(&k.s_str("input"));
+		let s: BrowserSettings = k.settings();
+		k.glyph_for_title(if s.show_name { &s.input } else { "" });
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let input = k.s_val("input");
-		let operation = press.op;
-		if !truthy(Some(&input)) {
+		let s: BrowserSettings = k.settings();
+		if s.input.is_empty() {
 			return Err("no browser source selected".into());
 		}
-		match operation.as_str() {
+		match press.op.as_str() {
 			"refresh" => {
-				k.call("PressInputPropertiesButton", json!({ "inputName": input, "propertyName": "refreshnocache" })).await?;
+				k.call("PressInputPropertiesButton", json!({ "inputName": s.input, "propertyName": "refreshnocache" })).await?;
 			}
 			"url" => {
-				let url = k.s_val("url");
-				if !truthy(Some(&url)) {
+				if s.url.is_empty() {
 					return Err("no URL set".into());
 				}
-				k.call("SetInputSettings", json!({ "inputName": input, "inputSettings": { "url": url }, "overlay": true })).await?;
+				k.call("SetInputSettings", json!({ "inputName": s.input, "inputSettings": { "url": s.url }, "overlay": true })).await?;
 			}
 			"cycle" => {
-				let urls = url_list(k);
+				let urls: Vec<&str> = s.urls.split('\n').map(js::trim).filter(|u| !u.is_empty()).collect();
 				if urls.is_empty() {
 					return Err("no URLs in the list".into());
 				}
-				let index = (k.s_num_or("index", 0.0) + 1.0) % urls.len() as f64;
-				let url = if index >= 0.0 { urls.get(index as usize).cloned() } else { None };
+				let index = (or(s.index, 0.0) + 1.0) % urls.len() as f64;
+				let url = if index >= 0.0 { urls.get(index as usize) } else { None };
 				let mut settings = Map::new();
 				if let Some(url) = url {
-					settings.insert("url".into(), url.into());
+					settings.insert("url".into(), (*url).into());
 				}
-				k.call("SetInputSettings", json!({ "inputName": input, "inputSettings": settings, "overlay": true })).await?;
+				k.call("SetInputSettings", json!({ "inputName": s.input, "inputSettings": settings, "overlay": true })).await?;
 				k.save_settings(patch(vec![("index", js::num(index))]));
 			}
 			"visibility" => {
-				let scene = k.data().program_scene.map_or(Value::Null, Value::from);
-				let item = scene_item(k, &scene, &input).await?;
+				let scene = k.data().program_scene;
+				let item = scene_item(k, scene.as_deref(), &s.input).await?;
 				let enabled = truthy(
 					k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemEnabled"),
 				);
@@ -526,6 +579,14 @@ pub static BROWSER_SOURCE: Kind = Kind {
 
 // ----- Filter Toggle -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FilterSettings {
+	source: String,
+	filter: String,
+	show_name: bool,
+}
+
 #[derive(Default)]
 struct FilterState {
 	enabled: bool,
@@ -535,11 +596,11 @@ struct FilterToggle;
 
 async fn load_filter(k: &KeyRc) {
 	k.own::<FilterState>().enabled = false;
-	let (source, filter) = (k.s_val("source"), k.s_val("filter"));
-	if !truthy(Some(&source)) || !truthy(Some(&filter)) {
+	let s: FilterSettings = k.settings();
+	if s.source.is_empty() || s.filter.is_empty() {
 		return;
 	}
-	let enabled = match k.call("GetSourceFilter", json!({ "sourceName": source, "filterName": filter })).await {
+	let enabled = match k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await {
 		Ok(r) => truthy(r.get("filterEnabled")),
 		Err(_) => false,
 	};
@@ -554,16 +615,16 @@ impl Behavior for FilterToggle {
 	}
 
 	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
-		if (old.get("source") != k.s("source").as_ref() || old.get("filter") != k.s("filter").as_ref()) && k.online() {
+		let (old, s): (FilterSettings, FilterSettings) = (crate::settings::read(old), k.settings());
+		if (old.source != s.source || old.filter != s.filter) && k.online() {
 			load_filter(k).await;
 		}
 		Ok(())
 	}
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
-		if kind == "SourceFilterEnableStateChanged"
-			&& data.get("sourceName") == k.s("source").as_ref()
-			&& data.get("filterName") == k.s("filter").as_ref()
+		let s: FilterSettings = k.settings();
+		if kind == "SourceFilterEnableStateChanged" && same_name(data, "sourceName", &s.source) && same_name(data, "filterName", &s.filter)
 		{
 			k.own::<FilterState>().enabled = truthy(data.get("filterEnabled"));
 			self.render(k);
@@ -572,23 +633,23 @@ impl Behavior for FilterToggle {
 	}
 
 	fn render(&self, k: &KeyRc) {
+		let s: FilterSettings = k.settings();
 		let enabled = k.own::<FilterState>().enabled;
 		k.set_state(if enabled { 1 } else { 0 });
-		k.show_name_title(&k.s_str("filter"));
+		k.glyph_for_title(if s.show_name { &s.filter } else { "" });
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let (source, filter) = (k.s_val("source"), k.s_val("filter"));
-		let mode = press.op;
-		if !truthy(Some(&source)) || !truthy(Some(&filter)) {
+		let s: FilterSettings = k.settings();
+		if s.source.is_empty() || s.filter.is_empty() {
 			return Err("no filter selected".into());
 		}
-		let enabled = match mode.as_str() {
+		let enabled = match press.op.as_str() {
 			"enable" => true,
 			"disable" => false,
-			_ => !truthy(k.call("GetSourceFilter", json!({ "sourceName": source, "filterName": filter })).await?.get("filterEnabled")),
+			_ => !truthy(k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await?.get("filterEnabled")),
 		};
-		k.call("SetSourceFilterEnabled", json!({ "sourceName": source, "filterName": filter, "filterEnabled": enabled })).await?;
+		k.call("SetSourceFilterEnabled", json!({ "sourceName": s.source, "filterName": s.filter, "filterEnabled": enabled })).await?;
 		k.own::<FilterState>().enabled = enabled;
 		self.render(k);
 		Ok(())
@@ -609,20 +670,27 @@ pub static FILTER_TOGGLE: Kind = Kind {
 
 // ----- Focused Window Capture: points a Window Capture (Xcomposite) source at the focused window. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FocusedSettings {
+	input: String,
+	/// Seconds to wait first, to switch to the window.
+	delay: f64,
+}
+
 struct FocusedWindow;
 
 #[async_trait(?Send)]
 impl Behavior for FocusedWindow {
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
-		let input = k.s_val("input");
-		if !truthy(Some(&input)) {
+		let s: FocusedSettings = k.settings();
+		if s.input.is_empty() {
 			return Err("no window capture source selected".into());
 		}
 		// Fails early when the source is missing.
-		k.call("GetInputSettings", json!({ "inputName": input })).await?;
-		let delay = k.s_num("delay");
-		if delay > 0.0 {
-			crate::timers::sleep(delay * 1000.0).await;
+		k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
+		if s.delay > 0.0 {
+			crate::timers::sleep(s.delay * 1000.0).await;
 		}
 		let Some(window) = active_x11_window().await? else {
 			return Err(if session_type() == "wayland" {
@@ -634,10 +702,10 @@ impl Behavior for FocusedWindow {
 		};
 		k.call(
 			"SetInputSettings",
-			json!({ "inputName": input, "inputSettings": { "capture_window": xcomposite_window_value(&window) }, "overlay": true }),
+			json!({ "inputName": s.input, "inputSettings": { "capture_window": xcomposite_window_value(&window) }, "overlay": true }),
 		)
 		.await?;
-		k.log(&format!("window capture \"{}\" -> {} ({})", js::to_string(Some(&input)), window.name, window.cls));
+		k.log(&format!("window capture \"{}\" -> {} ({})", s.input, window.name, window.cls));
 		k.show_ok();
 		Ok(())
 	}
@@ -655,6 +723,7 @@ pub static FOCUSED_WINDOW: Kind = Kind {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::settings::testing::assert_defaults;
 
 	#[test]
 	fn file_titles() {
@@ -665,5 +734,16 @@ mod tests {
 		assert_eq!(file_title("/a/dir/"), "dir");
 		assert_eq!(file_title("x."), "x.");
 		assert_eq!(file_title(""), "");
+	}
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<AnimationSettings>(&[&SOURCE_ANIMATION]);
+		assert_defaults::<animation::Options>(&[&SOURCE_ANIMATION]);
+		assert_defaults::<VideoSettings>(&[&VIDEO_PLAYER]);
+		assert_defaults::<ImageSettings>(&[&IMAGE_SOURCE]);
+		assert_defaults::<BrowserSettings>(&[&BROWSER_SOURCE]);
+		assert_defaults::<FilterSettings>(&[&FILTER_TOGGLE]);
+		assert_defaults::<FocusedSettings>(&[&FOCUSED_WINDOW]);
 	}
 }

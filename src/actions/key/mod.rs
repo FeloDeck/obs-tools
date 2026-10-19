@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::rc::{Rc, Weak};
 
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use tokio::task::spawn_local;
 
@@ -22,6 +24,7 @@ use crate::obs::{ObsClient, Reply, Status};
 use crate::obs_state::{Change, Data, ObsState};
 use crate::plugin::Plugin;
 use crate::sd::Sd;
+use crate::settings;
 use crate::timers::{Timer, set_interval};
 use crate::twitch::ChatMessage;
 use crate::{Error, Res};
@@ -100,6 +103,16 @@ struct Pending {
 	repeat_timer: Option<Timer>,
 }
 
+/// Another OBS than the one from the setup, for keys that can have their own.
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Connection {
+	custom_connection: bool,
+	host: String,
+	port: f64,
+	password: String,
+}
+
 /// What OpenDeck says about a key when it first shows up.
 #[derive(Debug, Clone, Default)]
 pub struct Appearance {
@@ -160,41 +173,24 @@ impl Key {
 		with_defaults(self.kind, settings)
 	}
 
-	pub fn settings(&self) -> Map<String, Value> {
+	/// The settings as the action keeps them (with its defaults), for OpenDeck and the settings page.
+	pub fn settings_map(&self) -> Map<String, Value> {
 		self.b.borrow().settings.clone()
 	}
 
-	/// A setting as it is (None: not there).
-	pub fn s(&self, key: &str) -> Option<Value> {
+	/// The settings as the struct of the action (see settings.rs).
+	pub fn settings<T: DeserializeOwned + Default>(&self) -> T {
+		settings::read(&self.b.borrow().settings)
+	}
+
+	/// One setting as it is, for settings whose name is not fixed (None: not there).
+	pub fn setting(&self, key: &str) -> Option<Value> {
 		self.b.borrow().settings.get(key).cloned()
 	}
 
-	/// A setting as text, like `String(value ?? "")`.
-	pub fn s_str(&self, key: &str) -> String {
-		js::str_or_empty(self.b.borrow().settings.get(key))
-	}
-
-	/// A setting as a JSON value for a request, null when missing.
-	pub fn s_val(&self, key: &str) -> Value {
-		self.s(key).unwrap_or(Value::Null)
-	}
-
-	pub fn s_truthy(&self, key: &str) -> bool {
-		truthy(self.b.borrow().settings.get(key))
-	}
-
-	/// Number(value)
-	pub fn s_num(&self, key: &str) -> f64 {
-		js::number(self.b.borrow().settings.get(key))
-	}
-
-	/// Number(value) || fallback
-	pub fn s_num_or(&self, key: &str, fallback: f64) -> f64 {
-		js::number_or(self.b.borrow().settings.get(key), fallback)
-	}
-
 	pub fn required_set(&self) -> bool {
-		self.kind.required.iter().all(|key| !js::trim(&self.s_str(key)).is_empty())
+		let b = self.b.borrow();
+		self.kind.required.iter().all(|key| !js::trim(&js::str_or_empty(b.settings.get(*key))).is_empty())
 	}
 
 	pub fn is_set_up(&self) -> bool {
@@ -250,17 +246,12 @@ impl Key {
 
 	/// None means the default connection from the setup.
 	pub fn connection_config(&self) -> Option<Resolved> {
-		let b = self.b.borrow();
-		let s = &b.settings;
-		let host = js::str_or_empty(s.get("host"));
-		if truthy(s.get("customConnection")) && !js::trim(&host).is_empty() {
-			return Some(Resolved {
-				host: js::trim(&js::to_string(s.get("host"))).to_string(),
-				port: js::number_or(s.get("port"), 4455.0),
-				password: js::str_or_empty(s.get("password")),
-			});
+		let c: Connection = self.settings();
+		let host = js::trim(&c.host);
+		if !c.custom_connection || host.is_empty() {
+			return None;
 		}
-		None
+		Some(Resolved { host: host.to_string(), port: settings::or(c.port, 4455.0), password: c.password })
 	}
 
 	/// The request is sent right away. Errors bubble up to safe(), which shows the alert.
@@ -415,7 +406,7 @@ impl Key {
 	}
 
 	pub fn update_settings(&self, settings: Option<&Value>) {
-		let old = self.settings();
+		let old = self.settings_map();
 		let before = self.connection_config();
 		self.b.borrow_mut().settings = self.with_defaults(settings);
 		if self.connection_config() != before {
@@ -448,7 +439,7 @@ impl Key {
 
 	fn follow_renames(&self, kind: &str, data: &Value) {
 		let mut patch = Map::new();
-		let s = self.settings();
+		let s = self.settings_map();
 		let follow = |patch: &mut Map<String, Value>, fields: &[&str], old: &str, new: &str| {
 			for key in fields {
 				if truthy(s.get(*key)) && s.get(*key) == data.get(old) {
@@ -473,7 +464,7 @@ impl Key {
 			let behavior = me.behavior();
 			// The hook gets the new settings as the old ones too: a rename does not change what the key
 			// points to, so nothing has to load again.
-			let current = me.settings();
+			let current = me.settings_map();
 			me.safe(async {
 				behavior.on_settings_changed(&me, &current).await?;
 				me.draw();

@@ -1,20 +1,31 @@
 // Dials (Stream Deck +): transition time, scene picker and any number in a filter.
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, KeyRc, Kind, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Stop, defaults, same_name};
 use crate::Res;
 use crate::i18n::{num, t};
 use crate::icons::colors;
 use crate::js::{self, truthy};
 use crate::obs_state::Change;
 use crate::render::dial_icon;
+use crate::settings::{self, or, read};
 use crate::timers::{Timer, set_timeout};
 
 const MIN_DURATION: f64 = 50.0;
 const MAX_DURATION: f64 = 20000.0;
 
 // ----- Transition dial: turn for the transition time, press for the next transition. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct TransitionDialSettings {
+	/// Milliseconds per tick.
+	step: f64,
+	/// "next" (transition), "studio" (take the preview live) or "nothing".
+	press_action: String,
+}
 
 #[derive(Default)]
 struct TransitionState {
@@ -104,7 +115,7 @@ impl Behavior for TransitionDial {
 				format!("{} has no duration", js::to_string(transition.name.map(Value::from).as_ref().or(Some(&Value::Null)))).into()
 			);
 		}
-		let step = js::max(10.0, k.s_num_or("step", 50.0));
+		let step = js::max(10.0, or(k.settings::<TransitionDialSettings>().step, 50.0));
 		let duration = js::min(MAX_DURATION, js::max(MIN_DURATION, transition.duration.unwrap_or(300.0) + ticks * step));
 		k.call("SetCurrentSceneTransitionDuration", json!({ "transitionDuration": js::num(duration) })).await?;
 		if let Some(state) = k.obs_state() {
@@ -115,7 +126,7 @@ impl Behavior for TransitionDial {
 	}
 
 	async fn on_dial_down(&self, k: &KeyRc) -> Res<()> {
-		let action = k.s_str("pressAction");
+		let action = k.settings::<TransitionDialSettings>().press_action;
 		if action == "nothing" {
 			return Ok(());
 		}
@@ -159,6 +170,13 @@ pub static TRANSITION_DIAL: Kind = Kind {
 // ----- Scene dial: turn to pick a scene (with a picture of it), press to switch. -----
 
 const PICK_TIMEOUT: f64 = 6000.0;
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct SceneDialSettings {
+	/// "pick" (turn picks, press switches) or "direct" (turn switches).
+	mode: String,
+}
 
 #[derive(Default)]
 struct SceneDialState {
@@ -325,7 +343,7 @@ impl Behavior for SceneDial {
 		let from = target(k).and_then(|t| scenes.iter().position(|s| *s == t)).map_or(-1, |i| i as i64);
 		let next = scenes[(from + ticks as i64).rem_euclid(len) as usize].clone();
 		clear_pick_timer(k);
-		if k.s_str("mode") == "direct" {
+		if k.settings::<SceneDialSettings>().mode == "direct" {
 			// Wait a moment, so a fast turn does not switch through every scene.
 			let old = dial(k).switch_timer.take();
 			if let Some(timer) = old {
@@ -508,6 +526,23 @@ fn format_number(value: f64, step: f64) -> String {
 	num(value, if decimals.is_nan() { 0 } else { decimals as usize })
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FilterDialSettings {
+	source: String,
+	filter: String,
+	/// The number in the filter settings that the dial turns.
+	setting: String,
+	/// Per tick. 0 or empty: from the table above, or a hundredth of the range.
+	step: f64,
+	#[serde(deserialize_with = "settings::optional_number")]
+	min: Option<f64>,
+	#[serde(deserialize_with = "settings::optional_number")]
+	max: Option<f64>,
+	/// "toggle" (the filter), "reset" (the number) or "nothing".
+	press_action: String,
+}
+
 #[derive(Default)]
 struct FilterDialState {
 	filter: Option<Map<String, Value>>,
@@ -524,12 +559,12 @@ fn fd(k: &KeyRc) -> std::cell::RefMut<'_, FilterDialState> {
 
 async fn load_filter(k: &KeyRc) {
 	fd(k).filter = None;
-	let (source, filter) = (k.s_val("source"), k.s_val("filter"));
-	if !truthy(Some(&source)) || !truthy(Some(&filter)) {
+	let s: FilterDialSettings = k.settings();
+	if s.source.is_empty() || s.filter.is_empty() {
 		return;
 	}
 	let result: Res<()> = async {
-		let found = k.call("GetSourceFilter", json!({ "sourceName": source, "filterName": filter })).await?;
+		let found = k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await?;
 		let kind = found.get("filterKind").cloned().unwrap_or(Value::Null);
 		fd(k).filter = Some(js::object(Some(&found)));
 		let defaults = k.call("GetSourceFilterDefaultSettings", json!({ "filterKind": kind })).await?;
@@ -548,7 +583,8 @@ async fn refresh_filter(k: &KeyRc, max_age: i64) {
 	if !has || !k.visible() || js::now() - fd(k).read_at < max_age {
 		return;
 	}
-	let Ok(fresh) = k.call("GetSourceFilter", json!({ "sourceName": k.s_val("source"), "filterName": k.s_val("filter") })).await else {
+	let s: FilterDialSettings = k.settings();
+	let Ok(fresh) = k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await else {
 		return;
 	};
 	let changed = {
@@ -568,27 +604,24 @@ async fn refresh_filter(k: &KeyRc, max_age: i64) {
 
 // [min, max, step]: from the settings page, the table above, or a guess.
 fn range(k: &KeyRc) -> (f64, f64, f64) {
-	let setting = k.s_str("setting");
+	let s: FilterDialSettings = k.settings();
 	let (kind, default) = {
-		let s = fd(k);
-		(js::str_or_empty(s.filter.as_ref().and_then(|f| f.get("filterKind"))), s.defaults.as_ref().and_then(|d| d.get(&setting)).cloned())
+		let d = fd(k);
+		(
+			js::str_or_empty(d.filter.as_ref().and_then(|f| f.get("filterKind"))),
+			d.defaults.as_ref().and_then(|d| d.get(&s.setting)).cloned(),
+		)
 	};
-	let known = filter_range(&kind, &setting);
+	let known = filter_range(&kind, &s.setting);
 	let guess_max = if js::number_or(default.as_ref(), 0.0).abs() <= 1.0 { 1.0 } else { 100.0 };
-	let given = |key: &str| match k.s(key) {
-		Some(Value::String(s)) if s.is_empty() => None,
-		Some(Value::Null) => None,
-		v => Some(js::number(v.as_ref())),
-	};
-	let min = given("min").unwrap_or_else(|| known.map_or(0.0, |r| r[0]));
-	let max = given("max").unwrap_or_else(|| known.map_or(guess_max, |r| r[1]));
-	let step_setting = k.s_num("step");
-	let step = if step_setting > 0.0 { step_setting } else { known.map_or((max - min) / 100.0, |r| r[2]) };
+	let min = s.min.unwrap_or_else(|| known.map_or(0.0, |r| r[0]));
+	let max = s.max.unwrap_or_else(|| known.map_or(guess_max, |r| r[1]));
+	let step = if s.step > 0.0 { s.step } else { known.map_or((max - min) / 100.0, |r| r[2]) };
 	(min, max, step)
 }
 
 fn filter_value(k: &KeyRc) -> f64 {
-	let key = k.s_str("setting");
+	let key = k.settings::<FilterDialSettings>().setting;
 	let s = fd(k);
 	let v = s
 		.filter
@@ -642,7 +675,8 @@ impl Behavior for FilterDial {
 	}
 
 	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
-		let changed = ["source", "filter", "setting"].iter().any(|key| old.get(*key) != k.s(key).as_ref());
+		let (old, s): (FilterDialSettings, FilterDialSettings) = (read(old), k.settings());
+		let changed = old.source != s.source || old.filter != s.filter || old.setting != s.setting;
 		if k.online() && changed {
 			load_filter(k).await;
 		}
@@ -650,7 +684,8 @@ impl Behavior for FilterDial {
 	}
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
-		if data.get("sourceName") != k.s("source").as_ref() || data.get("filterName") != k.s("filter").as_ref() || fd(k).filter.is_none() {
+		let s: FilterDialSettings = k.settings();
+		if !same_name(data, "sourceName", &s.source) || !same_name(data, "filterName", &s.filter) || fd(k).filter.is_none() {
 			return Ok(());
 		}
 		match kind {
@@ -672,7 +707,8 @@ impl Behavior for FilterDial {
 
 	// Without OBS or settings: the name, the status, and the setup dot on the icon.
 	fn render_offline(&self, k: &KeyRc) {
-		let title = if k.s_truthy("filter") { k.s_val("filter") } else { Value::from(t("Filter")) };
+		let filter = k.settings::<FilterDialSettings>().filter;
+		let title = if filter.is_empty() { t("Filter") } else { filter };
 		k.set_feedback(
 			json!({ "title": title, "icon": dial_icon("filter", !k.is_set_up()), "value": k.dial_status(), "indicator": { "value": 0 } }),
 		);
@@ -682,13 +718,11 @@ impl Behavior for FilterDial {
 		if !k.is_set_up() {
 			return self.render_offline(k);
 		}
-		let filter_name = k.s_str("filter");
+		let s: FilterDialSettings = k.settings();
 		let filter = fd(k).filter.clone();
 		let Some(filter) = filter else {
 			// The filter is not in OBS (any more).
-			k.set_feedback(
-				json!({ "title": k.s_val("filter"), "icon": dial_icon("filter", false), "value": "?", "indicator": { "value": 0 } }),
-			);
+			k.set_feedback(json!({ "title": s.filter, "icon": dial_icon("filter", false), "value": "?", "indicator": { "value": 0 } }));
 			return;
 		};
 		let (min, max, step) = range(k);
@@ -696,7 +730,7 @@ impl Behavior for FilterDial {
 		let on = truthy(filter.get("filterEnabled"));
 		let indicator = if max > min { js::round(((value - min) / (max - min)) * 100.0) } else { 0.0 };
 		k.set_feedback(json!({
-			"title": format!("{filter_name} · {}", t(&filter_value_label(&k.s_str("setting")))),
+			"title": format!("{} · {}", s.filter, t(&filter_value_label(&s.setting))),
 			"icon": dial_icon("filter", false),
 			"value": { "value": if on { format_number(value, step) } else { t("off") }, "color": if on { colors::WHITE } else { colors::GRAY } },
 			"indicator": { "value": js::num(indicator), "bar_fill_c": if on { colors::WHITE } else { colors::GRAY } },
@@ -704,7 +738,8 @@ impl Behavior for FilterDial {
 	}
 
 	async fn on_dial_rotate(&self, k: &KeyRc, ticks: f64, _pressed: bool) -> Res<()> {
-		let setting = k.s_str("setting");
+		let s: FilterDialSettings = k.settings();
+		let setting = s.setting;
 		if fd(k).filter.is_none() {
 			load_filter(k).await;
 		}
@@ -723,7 +758,7 @@ impl Behavior for FilterDial {
 		settings.insert(setting.clone(), js::num(if is_int { js::round(rounded) } else { rounded }));
 		k.call(
 			"SetSourceFilterSettings",
-			json!({ "sourceName": k.s_val("source"), "filterName": k.s_val("filter"), "filterSettings": settings, "overlay": true }),
+			json!({ "sourceName": s.source, "filterName": s.filter, "filterSettings": settings, "overlay": true }),
 		)
 		.await?;
 		set_filter_value(k, &setting, js::num(rounded));
@@ -733,8 +768,8 @@ impl Behavior for FilterDial {
 	}
 
 	async fn on_dial_down(&self, k: &KeyRc) -> Res<()> {
-		let setting = k.s_str("setting");
-		let action = k.s_str("pressAction");
+		let s: FilterDialSettings = k.settings();
+		let (setting, action) = (s.setting, s.press_action);
 		if fd(k).filter.is_none() {
 			load_filter(k).await;
 		}
@@ -745,17 +780,13 @@ impl Behavior for FilterDial {
 			settings.insert(setting.clone(), value.clone());
 			k.call(
 				"SetSourceFilterSettings",
-				json!({ "sourceName": k.s_val("source"), "filterName": k.s_val("filter"), "filterSettings": settings, "overlay": true }),
+				json!({ "sourceName": s.source, "filterName": s.filter, "filterSettings": settings, "overlay": true }),
 			)
 			.await?;
 			set_filter_value(k, &setting, value);
 		} else if action == "toggle" {
 			let enabled = !truthy(filter.get("filterEnabled"));
-			k.call(
-				"SetSourceFilterEnabled",
-				json!({ "sourceName": k.s_val("source"), "filterName": k.s_val("filter"), "filterEnabled": enabled }),
-			)
-			.await?;
+			k.call("SetSourceFilterEnabled", json!({ "sourceName": s.source, "filterName": s.filter, "filterEnabled": enabled })).await?;
 			if let Some(filter) = fd(k).filter.as_mut() {
 				filter.insert("filterEnabled".into(), enabled.into());
 			}
@@ -782,6 +813,15 @@ pub static FILTER_DIAL: Kind = Kind {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<TransitionDialSettings>(&[&TRANSITION_DIAL]);
+		assert_defaults::<SceneDialSettings>(&[&SCENE_DIAL]);
+		assert_defaults::<FilterDialSettings>(&[&FILTER_DIAL]);
+	}
 
 	#[test]
 	fn filter_ranges_know_versioned_filter_kinds() {

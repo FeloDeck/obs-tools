@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use tokio::sync::{oneshot, watch};
 use tokio::task::spawn_local;
 
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs::ObsClient;
 use crate::obs_state::ObsState;
 use crate::timers::{Timer, set_interval};
@@ -55,22 +55,23 @@ pub fn wait_for_event(client: &Rc<ObsClient>, kind: &str, timeout_ms: f64, filte
 	})
 }
 
-async fn find_item(client: &ObsClient, scene_name: &Value, source_name: &Value) -> Option<Value> {
-	if !truthy(Some(scene_name)) {
-		return None;
-	}
+async fn find_item(client: &ObsClient, scene_name: Option<&str>, source_name: &str) -> Option<Value> {
+	let scene_name = scene_name.filter(|s| !s.is_empty())?;
 	client
-		.call("GetSceneItemId", crate::obj! { "sceneName" => scene_name.clone(), "sourceName" => source_name.clone() })
+		.call("GetSceneItemId", crate::obj! { "sceneName" => scene_name, "sourceName" => source_name })
 		.await
 		.ok()
 		.and_then(|r| r.get("sceneItemId").cloned())
 }
 
 pub struct PlayOptions {
-	pub input: Value,
-	pub file: Value,
-	pub speed: Option<Value>,
-	pub scene: Value,
+	pub input: String,
+	/// Empty: the file the source has.
+	pub file: String,
+	/// In percent. 0 or NaN: 100.
+	pub speed: f64,
+	/// Empty: the live scene, and no scene switch.
+	pub scene: String,
 	pub show_source: bool,
 	pub hide_when_done: bool,
 	pub return_to_scene: bool,
@@ -79,9 +80,9 @@ pub struct PlayOptions {
 struct Running {
 	client: Rc<ObsClient>,
 	state: Rc<ObsState>,
-	input: Value,
-	scene: Value,
-	target_scene: Value,
+	input: String,
+	scene: String,
+	target_scene: Option<String>,
 	previous_scene: Option<String>,
 	item_id: Option<Value>,
 	hide_when_done: bool,
@@ -148,11 +149,11 @@ async fn finish(r: Rc<Running>) {
 				)
 				.await?;
 		}
-		let scene = js::str_or_empty(Some(&r.scene));
+		let scene = &r.scene;
 		if r.return_to_scene
-			&& truthy(Some(&r.scene))
-			&& let Some(previous) = r.previous_scene.clone().filter(|p| !p.is_empty() && *p != scene)
-			&& r.state.with(|d| d.program_scene.as_deref() == Some(scene.as_str()))
+			&& !scene.is_empty()
+			&& let Some(previous) = r.previous_scene.clone().filter(|p| !p.is_empty() && p != scene)
+			&& r.state.with(|d| d.program_scene.as_ref() == Some(scene))
 		{
 			r.client.call("SetCurrentProgramScene", crate::obj! { "sceneName" => previous }).await?;
 		}
@@ -166,17 +167,17 @@ async fn finish(r: Rc<Running>) {
 /// Starts playback. The returned Playback says when it is done and can stop it.
 pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOptions) -> Res<Playback> {
 	let previous_scene = state.with(|d| d.program_scene.clone());
-	let target_scene = if truthy(Some(&o.scene)) { o.scene.clone() } else { previous_scene.clone().map_or(Value::Null, Value::from) };
+	let target_scene = if o.scene.is_empty() { previous_scene.clone() } else { Some(o.scene.clone()) };
 
 	// Load the file first, so the scene never shows the old one.
-	let speed = js::min(200.0, js::max(1.0, js::round(js::number_or(o.speed.as_ref(), 100.0))));
+	let speed = js::min(200.0, js::max(1.0, js::round(crate::settings::or(o.speed, 100.0))));
 	let mut settings = Map::new();
 	settings.insert("speed_percent".into(), js::num(speed));
 	settings.insert("looping".into(), false.into());
 	settings.insert("restart_on_activate".into(), true.into());
-	if truthy(Some(&o.file)) {
+	if !o.file.is_empty() {
 		settings.insert("is_local_file".into(), true.into());
-		settings.insert("local_file".into(), o.file.clone());
+		settings.insert("local_file".into(), o.file.clone().into());
 	}
 	client
 		.call(
@@ -185,7 +186,7 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 		)
 		.await?;
 
-	let item_id = if o.show_source || o.hide_when_done { find_item(client, &target_scene, &o.input).await } else { None };
+	let item_id = if o.show_source || o.hide_when_done { find_item(client, target_scene.as_deref(), &o.input).await } else { None };
 	if o.show_source
 		&& let Some(item_id) = &item_id
 	{
@@ -202,8 +203,7 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 			crate::obj! { "inputName" => o.input.clone(), "mediaAction" => "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART" },
 		)
 		.await?;
-	let scene = js::str_or_empty(Some(&o.scene));
-	if truthy(Some(&o.scene)) && state.with(|d| d.program_scene.as_deref() != Some(scene.as_str())) {
+	if !o.scene.is_empty() && state.with(|d| d.program_scene.as_ref() != Some(&o.scene)) {
 		client.call("SetCurrentProgramScene", crate::obj! { "sceneName" => o.scene.clone() }).await?;
 	}
 
@@ -229,7 +229,7 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 	let r = running.clone();
 	let input = o.input.clone();
 	let ended = client.on_type("MediaInputPlaybackEnded", move |data| {
-		if data.get("inputName") == Some(&input) && js::now() - r.started_at > START_GRACE_MS / 2 {
+		if data.get("inputName").and_then(Value::as_str) == Some(input.as_str()) && js::now() - r.started_at > START_GRACE_MS / 2 {
 			spawn_local(finish(r.clone()));
 		}
 	});

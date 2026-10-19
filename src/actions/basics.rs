@@ -2,17 +2,33 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, Stop, defaults, same_name};
 use crate::Res;
 use crate::icons::{colors, media_glyph};
 use crate::js::{self, truthy};
 use crate::obs_state::Change;
 use crate::render::{GlyphKey, glyph_key};
+use crate::settings;
 use crate::time::format_duration;
 
+/// The scene of the key, or the live scene without one.
+pub fn scene_or_live(k: &KeyRc, scene: &str) -> Option<String> {
+	if scene.is_empty() { k.data().program_scene } else { Some(scene.to_string()) }
+}
+
 // ----- Source Visibility: show or hide a source in a scene. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct VisibilitySettings {
+	/// Empty: the live scene.
+	scene: String,
+	source: String,
+	show_name: bool,
+}
 
 #[derive(Default)]
 struct VisibilityState {
@@ -26,27 +42,16 @@ fn vis(k: &KeyRc) -> std::cell::RefMut<'_, VisibilityState> {
 	k.own::<VisibilityState>()
 }
 
-/// The scene of the key, or the live scene without one.
-pub fn scene_name(k: &KeyRc, key: &str) -> Value {
-	let scene = k.s_val(key);
-	if truthy(Some(&scene)) {
-		return scene;
-	}
-	k.data().program_scene.map_or(Value::Null, Value::from)
-}
-
 async fn load_visibility(k: &KeyRc) {
 	{
 		let mut s = vis(k);
 		s.item_id = None;
 		s.enabled = false;
 	}
-	let scene = scene_name(k, "scene");
-	if !truthy(Some(&scene)) || !k.s_truthy("source") {
-		return;
-	}
+	let s: VisibilitySettings = k.settings();
+	let Some(scene) = scene_or_live(k, &s.scene).filter(|_| !s.source.is_empty()) else { return };
 	let result: Res<()> = async {
-		let item = k.call("GetSceneItemId", json!({ "sceneName": scene, "sourceName": k.s_val("source") })).await?;
+		let item = k.call("GetSceneItemId", json!({ "sceneName": scene, "sourceName": s.source })).await?;
 		let id = item.get("sceneItemId").cloned().unwrap_or(Value::Null);
 		vis(k).item_id = Some(id.clone());
 		let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": id })).await?;
@@ -75,7 +80,7 @@ impl Behavior for SourceVisibility {
 
 	async fn on_state_change(&self, k: &KeyRc, change: Change) -> Res<()> {
 		// Without a fixed scene the key follows the live scene.
-		if !k.s_truthy("scene") && change == Change::Program {
+		if k.settings::<VisibilitySettings>().scene.is_empty() && change == Change::Program {
 			load_visibility(k).await;
 		}
 		self.render(k);
@@ -83,7 +88,8 @@ impl Behavior for SourceVisibility {
 	}
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
-		let same_scene = data.get("sceneName") == Some(&scene_name(k, "scene"));
+		let s: VisibilitySettings = k.settings();
+		let same_scene = scene_or_live(k, &s.scene).is_some_and(|scene| same_name(data, "sceneName", &scene));
 		if kind == "SceneItemEnableStateChanged"
 			&& same_scene
 			&& vis(k).item_id.as_ref().is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, id)))
@@ -101,21 +107,22 @@ impl Behavior for SourceVisibility {
 	}
 
 	fn render(&self, k: &KeyRc) {
+		let s: VisibilitySettings = k.settings();
 		let enabled = vis(k).enabled;
 		k.set_state(if enabled { 1 } else { 0 });
-		k.show_name_title(&k.s_str("source"));
+		k.glyph_for_title(if s.show_name { &s.source } else { "" });
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let scene = scene_name(k, "scene");
+		let s: VisibilitySettings = k.settings();
+		let scene = scene_or_live(k, &s.scene);
 		if vis(k).item_id.is_none() {
 			load_visibility(k).await;
 		}
 		let Some(item_id) = vis(k).item_id.clone() else {
-			return Err(format!("\"{}\" is not in scene \"{}\"", js::to_string(k.s("source").as_ref()), js::to_string(Some(&scene))).into());
+			return Err(format!("\"{}\" is not in scene \"{}\"", s.source, scene.unwrap_or_default()).into());
 		};
-		let mode = press.op;
-		let enabled = match mode.as_str() {
+		let enabled = match press.op.as_str() {
 			"show" => true,
 			"hide" => false,
 			_ => !vis(k).enabled,
@@ -141,29 +148,47 @@ pub static SOURCE_VISIBILITY: Kind = Kind {
 
 // ----- OBS Hotkey: by its name, or by the keys it is bound to in OBS. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct HotkeySettings {
+	/// "name" or "keys".
+	mode: String,
+	hotkey: String,
+	/// The source of a source hotkey, empty for the others.
+	context: String,
+	/// Like "OBS_KEY_F13".
+	key: String,
+	shift: bool,
+	control: bool,
+	alt: bool,
+	command: bool,
+}
+
 struct Hotkey;
 
 #[async_trait(?Send)]
 impl Behavior for Hotkey {
 	fn is_set_up(&self, k: &KeyRc) -> bool {
-		if k.s_str("mode") == "keys" { k.s_truthy("key") } else { k.s_truthy("hotkey") }
+		let s: HotkeySettings = k.settings();
+		if s.mode == "keys" { !s.key.is_empty() } else { !s.hotkey.is_empty() }
 	}
 
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
-		if k.s_str("mode") == "keys" {
-			if !k.s_truthy("key") {
+		let s: HotkeySettings = k.settings();
+		if s.mode == "keys" {
+			if s.key.is_empty() {
 				return Err("no key set".into());
 			}
-			let modifiers = json!({ "shift": k.s_truthy("shift"), "control": k.s_truthy("control"), "alt": k.s_truthy("alt"), "command": k.s_truthy("command") });
-			k.call("TriggerHotkeyByKeySequence", json!({ "keyId": k.s_val("key"), "keyModifiers": modifiers })).await?;
+			let modifiers = json!({ "shift": s.shift, "control": s.control, "alt": s.alt, "command": s.command });
+			k.call("TriggerHotkeyByKeySequence", json!({ "keyId": s.key, "keyModifiers": modifiers })).await?;
 		} else {
-			if !k.s_truthy("hotkey") {
+			if s.hotkey.is_empty() {
 				return Err("no hotkey selected".into());
 			}
 			let mut data = Map::new();
-			data.insert("hotkeyName".into(), k.s_val("hotkey"));
-			if k.s_truthy("context") {
-				data.insert("contextName".into(), k.s_val("context"));
+			data.insert("hotkeyName".into(), s.hotkey.into());
+			if !s.context.is_empty() {
+				data.insert("contextName".into(), s.context.into());
 			}
 			k.call("TriggerHotkeyByName", Value::Object(data)).await?;
 		}
@@ -186,30 +211,42 @@ pub static HOTKEY: Kind = Kind {
 
 // ----- Screenshot: save a picture of a scene or source as a file. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct ScreenshotSettings {
+	/// Empty: the live scene.
+	source: String,
+	/// Empty: the recording folder of OBS.
+	folder: String,
+	/// "png" or "jpg".
+	format: String,
+	/// 0: full size.
+	width: f64,
+}
+
 struct Screenshot;
 
 #[async_trait(?Send)]
 impl Behavior for Screenshot {
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
-		let source = k.s_val("source");
-		let source_name = if truthy(Some(&source)) { source } else { k.data().program_scene.map_or(Value::Null, Value::from) };
-		let dir = if k.s_truthy("folder") {
-			k.s_str("folder")
-		} else {
+		let s: ScreenshotSettings = k.settings();
+		let source = scene_or_live(k, &s.source);
+		let dir = if s.folder.is_empty() {
 			js::to_string(k.call("GetRecordDirectory", json!({})).await?.get("recordDirectory"))
+		} else {
+			s.folder
 		};
 		let stamp = js::iso_time(js::now())[..19].replace('T', " ").replace(':', "-");
-		let ext = if k.s_str("format") == "jpg" { "jpg" } else { "png" };
+		let ext = if s.format == "jpg" { "jpg" } else { "png" };
 		let safe_name: String =
-			js::to_string(Some(&source_name)).chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect();
+			source.as_deref().unwrap_or_default().chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect();
 		let file = Path::new(&dir).join(format!("Screenshot {safe_name} {stamp}.{ext}")).to_string_lossy().into_owned();
 		let mut data = Map::new();
-		data.insert("sourceName".into(), source_name);
+		data.insert("sourceName".into(), source.into());
 		data.insert("imageFormat".into(), ext.into());
 		data.insert("imageFilePath".into(), file.clone().into());
-		let width = k.s_num("width");
-		if width > 0.0 {
-			data.insert("imageWidth".into(), js::num(js::round(width)));
+		if s.width > 0.0 {
+			data.insert("imageWidth".into(), js::num(js::round(s.width)));
 		}
 		if ext == "jpg" {
 			data.insert("imageCompressionQuality".into(), 90.into());
@@ -231,10 +268,18 @@ pub static SCREENSHOT: Kind = Kind {
 
 // ----- Recording Marker: chapter marker or file split while recording. -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct RecordToolsSettings {
+	/// "chapter" or "split".
+	operation: String,
+	chapter_name: String,
+}
+
 struct RecordTools;
 
 fn record_tools_glyph(k: &KeyRc) -> &'static str {
-	if k.s_str("operation") == "split" { "split" } else { "chapter" }
+	if k.settings::<RecordToolsSettings>().operation == "split" { "split" } else { "chapter" }
 }
 
 #[async_trait(?Send)]
@@ -259,7 +304,7 @@ impl Behavior for RecordTools {
 			k.call("SplitRecordFile", json!({})).await?;
 		} else {
 			let mut data = Map::new();
-			let name = js::trim(&k.s_str("chapterName")).to_string();
+			let name = js::trim(&k.settings::<RecordToolsSettings>().chapter_name).to_string();
 			if !name.is_empty() {
 				data.insert("chapterName".into(), name.into());
 			}
@@ -281,6 +326,20 @@ pub static RECORD_TOOLS: Kind = Kind {
 };
 
 // ----- Media Control: play, pause, stop or skip in a media source. Shows the time left. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct MediaSettings {
+	input: String,
+	/// What a press does (one of the ops).
+	operation: String,
+	/// How far forward and back skip.
+	seconds: f64,
+	show_time: bool,
+	time_at: String,
+	/// "left" or "played".
+	time_shows: String,
+}
 
 fn media_action(op: &str) -> Option<&'static str> {
 	match op {
@@ -307,10 +366,11 @@ fn media(k: &KeyRc) -> std::cell::RefMut<'_, MediaState> {
 }
 
 async fn poll_media(k: &KeyRc) {
-	if !k.visible() || !k.s_truthy("input") {
+	let input = k.settings::<MediaSettings>().input;
+	if !k.visible() || input.is_empty() {
 		return;
 	}
-	let status = k.call("GetMediaInputStatus", json!({ "inputName": k.s_val("input") })).await.ok();
+	let status = k.call("GetMediaInputStatus", json!({ "inputName": input })).await.ok();
 	media(k).status = status;
 	k.render();
 }
@@ -319,12 +379,11 @@ fn media_playing(k: &KeyRc) -> bool {
 	media(k).status.as_ref().and_then(|s| s.get("mediaState")).and_then(Value::as_str) == Some("OBS_MEDIA_STATE_PLAYING")
 }
 
-fn media_glyph_name(k: &KeyRc) -> &'static str {
-	let op = k.s_str("operation");
-	if op == "playpause" {
+fn media_glyph_name(k: &KeyRc, operation: &str) -> &'static str {
+	if operation == "playpause" {
 		return if media_playing(k) { "pauseMedia" } else { "play" };
 	}
-	media_glyph(&op).unwrap_or("playPause")
+	media_glyph(operation).unwrap_or("playPause")
 }
 
 #[async_trait(?Send)]
@@ -360,7 +419,7 @@ impl Behavior for MediaControl {
 	}
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
-		if data.get("inputName") == k.s("input").as_ref() && kind.starts_with("MediaInput") {
+		if same_name(data, "inputName", &k.settings::<MediaSettings>().input) && kind.starts_with("MediaInput") {
 			let k = k.clone();
 			tokio::task::spawn_local(async move { poll_media(&k).await });
 		}
@@ -368,13 +427,14 @@ impl Behavior for MediaControl {
 	}
 
 	fn render_offline(&self, k: &KeyRc) {
-		let op = k.s_str("operation");
+		let op = k.settings::<MediaSettings>().operation;
 		let glyph = if op == "playpause" { "playPause" } else { media_glyph(&op).unwrap_or("playPause") };
 		k.set_image(&glyph_key(glyph, &GlyphKey::default()));
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let show_time = k.s_truthy("showTime") && k.s_truthy("input");
+		let s: MediaSettings = k.settings();
+		let show_time = s.show_time && !s.input.is_empty();
 		let status = media(k).status.clone();
 		let field = |name: &str| status.as_ref().and_then(|s| s.get(name)).cloned();
 		let cursor = field("mediaCursor").filter(|c| !c.is_null());
@@ -383,7 +443,7 @@ impl Behavior for MediaControl {
 		// Time played works without a length too, like for a stream as source.
 		if let Some(cursor) = &cursor {
 			let cursor = js::number(Some(cursor));
-			if k.s_str("timeShows") == "played" {
+			if s.time_shows == "played" {
 				time = format_duration(cursor / 1000.0);
 			} else if duration > 0.0 {
 				time = format!("-{}", format_duration((duration - cursor) / 1000.0));
@@ -393,24 +453,25 @@ impl Behavior for MediaControl {
 		let title = if show_time && (media_playing(k) || paused) { time } else { String::new() };
 		// The time goes above or below the glyph, so the key draws it into the image.
 		k.own_title(&title);
-		let at = k.s_str("timeAt");
 		let color = if status.as_ref().is_some_and(|s| truthy(Some(s))) { colors::WHITE } else { colors::GRAY };
-		k.set_image(&glyph_key(media_glyph_name(k), &GlyphKey { title: &title, title_at: &at, color, ..Default::default() }));
+		k.set_image(&glyph_key(
+			media_glyph_name(k, &s.operation),
+			&GlyphKey { title: &title, title_at: &s.time_at, color, ..Default::default() },
+		));
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let input = k.s_val("input");
-		let operation = press.op;
-		if !truthy(Some(&input)) {
+		let s: MediaSettings = k.settings();
+		if s.input.is_empty() {
 			return Err("no media source selected".into());
 		}
-		if operation == "forward" || operation == "back" {
-			let offset = js::round(k.s_num_or("seconds", 10.0) * 1000.0) * if operation == "back" { -1.0 } else { 1.0 };
-			k.call("OffsetMediaInputCursor", json!({ "inputName": input, "mediaCursorOffset": js::num(offset) })).await?;
+		if press.op == "forward" || press.op == "back" {
+			let offset = js::round(settings::or(s.seconds, 10.0) * 1000.0) * if press.op == "back" { -1.0 } else { 1.0 };
+			k.call("OffsetMediaInputCursor", json!({ "inputName": s.input, "mediaCursorOffset": js::num(offset) })).await?;
 		} else {
-			let mut action = media_action(&operation);
-			if operation == "playpause" {
-				let status = k.call("GetMediaInputStatus", json!({ "inputName": input })).await?;
+			let mut action = media_action(&press.op);
+			if press.op == "playpause" {
+				let status = k.call("GetMediaInputStatus", json!({ "inputName": s.input })).await?;
 				action = match status.get("mediaState").and_then(Value::as_str) {
 					Some("OBS_MEDIA_STATE_PLAYING") => media_action("pause"),
 					Some("OBS_MEDIA_STATE_ENDED" | "OBS_MEDIA_STATE_STOPPED" | "OBS_MEDIA_STATE_NONE") => media_action("restart"),
@@ -418,7 +479,7 @@ impl Behavior for MediaControl {
 				};
 			}
 			let mut data = Map::new();
-			data.insert("inputName".into(), input);
+			data.insert("inputName".into(), s.input.into());
 			if let Some(action) = action {
 				data.insert("mediaAction".into(), action.into());
 			}
@@ -450,52 +511,66 @@ pub static MEDIA_CONTROL: Kind = Kind {
 
 // ----- Profile / Scene Collection -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct ProfileSettings {
+	/// "profile" or "collection".
+	kind: String,
+	name: String,
+	show_name: bool,
+}
+
+impl ProfileSettings {
+	fn collection(&self) -> bool {
+		self.kind == "collection"
+	}
+
+	fn glyph(&self) -> &'static str {
+		if self.collection() { "collection" } else { "profile" }
+	}
+
+	fn title(&self) -> &str {
+		if self.show_name { &self.name } else { "" }
+	}
+}
+
 struct ProfileSwitch;
 
-fn profile_current(k: &KeyRc) -> Option<String> {
+fn profile_current(k: &KeyRc, s: &ProfileSettings) -> Option<String> {
 	let data = k.data();
-	if k.s_str("kind") == "collection" { data.collection } else { data.profile }
-}
-
-fn profile_glyph(k: &KeyRc) -> &'static str {
-	if k.s_str("kind") == "collection" { "collection" } else { "profile" }
-}
-
-fn profile_title(k: &KeyRc) -> String {
-	if k.s_truthy("showName") { k.s_str("name") } else { String::new() }
+	if s.collection() { data.collection } else { data.profile }
 }
 
 #[async_trait(?Send)]
 impl Behavior for ProfileSwitch {
 	fn render_offline(&self, k: &KeyRc) {
-		let title = profile_title(k);
-		k.own_title(&title);
-		k.set_image(&glyph_key(profile_glyph(k), &GlyphKey { title: &title, color: colors::GRAY, ..Default::default() }));
+		let s: ProfileSettings = k.settings();
+		k.own_title(s.title());
+		k.set_image(&glyph_key(s.glyph(), &GlyphKey { title: s.title(), color: colors::GRAY, ..Default::default() }));
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let active = k.s_truthy("name") && profile_current(k).as_deref() == Some(k.s_str("name").as_str());
-		let title = profile_title(k);
-		k.own_title(&title);
+		let s: ProfileSettings = k.settings();
+		let active = !s.name.is_empty() && profile_current(k, &s).as_deref() == Some(s.name.as_str());
+		k.own_title(s.title());
 		k.set_image(&glyph_key(
-			profile_glyph(k),
-			&GlyphKey { title: &title, color: if active { colors::WHITE } else { colors::GRAY }, ..Default::default() },
+			s.glyph(),
+			&GlyphKey { title: s.title(), color: if active { colors::WHITE } else { colors::GRAY }, ..Default::default() },
 		));
 	}
 
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
-		let collection = k.s_str("kind") == "collection";
-		if !k.s_truthy("name") {
-			return Err(if collection { "no scene collection selected" } else { "no profile selected" }.into());
+		let s: ProfileSettings = k.settings();
+		if s.name.is_empty() {
+			return Err(if s.collection() { "no scene collection selected" } else { "no profile selected" }.into());
 		}
-		let name = k.s_val("name");
-		if profile_current(k).map(Value::from).as_ref() == Some(&name) {
+		if profile_current(k, &s).as_deref() == Some(s.name.as_str()) {
 			return Ok(());
 		}
-		if collection {
-			k.call("SetCurrentSceneCollection", json!({ "sceneCollectionName": name })).await?;
+		if s.collection() {
+			k.call("SetCurrentSceneCollection", json!({ "sceneCollectionName": s.name })).await?;
 		} else {
-			k.call("SetCurrentProfile", json!({ "profileName": name })).await?;
+			k.call("SetCurrentProfile", json!({ "profileName": s.name })).await?;
 		}
 		Ok(())
 	}
@@ -509,3 +584,19 @@ pub static PROFILE_SWITCH: Kind = Kind {
 	behavior: &ProfileSwitch,
 	..Kind::BASE
 };
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<VisibilitySettings>(&[&SOURCE_VISIBILITY]);
+		assert_defaults::<HotkeySettings>(&[&HOTKEY]);
+		assert_defaults::<ScreenshotSettings>(&[&SCREENSHOT]);
+		assert_defaults::<RecordToolsSettings>(&[&RECORD_TOOLS]);
+		assert_defaults::<MediaSettings>(&[&MEDIA_CONTROL]);
+		assert_defaults::<ProfileSettings>(&[&PROFILE_SWITCH]);
+	}
+}

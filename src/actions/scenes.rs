@@ -1,14 +1,29 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, ShowName, Stop, defaults};
 use crate::Res;
 use crate::icons::colors;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs_state::Change;
 use crate::render::{GlyphKey, SceneKey, glyph_key, is_color, scene_key};
+use crate::settings::{self, read};
 
 // ----- Smart Scene: press once to put the scene in preview (studio mode), press again to go live. -----
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct SceneSettings {
+	scene: String,
+	title: String,
+	show_title: bool,
+	show_preview: bool,
+	preview_fit: String,
+	preview_interval: f64,
+	live_color: String,
+	preview_color: String,
+}
 
 #[derive(Default)]
 struct SceneState {
@@ -31,9 +46,9 @@ fn stop_preview(k: &KeyRc) {
 
 fn start_preview(k: &KeyRc) {
 	stop_preview(k);
-	let seconds = k.s_num("previewInterval");
-	if k.s_truthy("showPreview") && seconds > 0.0 {
-		let stop = k.interval(js::max(500.0, seconds * 1000.0), |k| {
+	let s: SceneSettings = k.settings();
+	if s.show_preview && s.preview_interval > 0.0 {
+		let stop = k.interval((s.preview_interval * 1000.0).max(500.0), |k| {
 			Box::pin(async move {
 				refresh_shot(&k).await;
 				Ok(())
@@ -44,25 +59,25 @@ fn start_preview(k: &KeyRc) {
 }
 
 async fn refresh_shot(k: &KeyRc) {
-	let scene_name = k.s_val("scene");
-	if !k.visible() || !k.online() || !truthy(Some(&scene_name)) || !k.s_truthy("showPreview") {
+	let s: SceneSettings = k.settings();
+	if !k.visible() || !k.online() || s.scene.is_empty() || !s.show_preview {
 		return;
 	}
 	let result = k
 		.call(
 			"GetSourceScreenshot",
-			json!({ "sourceName": scene_name, "imageFormat": "jpg", "imageWidth": 256, "imageCompressionQuality": 70 }),
+			json!({ "sourceName": s.scene, "imageFormat": "jpg", "imageWidth": 256, "imageCompressionQuality": 70 }),
 		)
 		.await;
 	scene(k).shot = result.ok().and_then(|r| r.get("imageData").and_then(Value::as_str).map(String::from));
 	k.render();
 }
 
-fn scene_title(k: &KeyRc) -> String {
-	if !k.s_truthy("showTitle") {
+fn scene_title(s: &SceneSettings) -> String {
+	if !s.show_title {
 		return String::new();
 	}
-	if k.s_truthy("title") { k.s_str("title") } else { k.s_str("scene") }
+	if s.title.is_empty() { s.scene.clone() } else { s.title.clone() }
 }
 
 #[async_trait(?Send)]
@@ -83,13 +98,14 @@ impl Behavior for SmartScene {
 	}
 
 	fn render_offline(&self, k: &KeyRc) {
-		let title = scene_title(k);
+		let title = scene_title(&k.settings());
 		k.own_title(&title);
 		k.set_image(&scene_key(&SceneKey { title: &title, ..Default::default() }));
 	}
 
 	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
-		if old.get("scene") != k.s("scene").as_ref() || old.get("showPreview") != k.s("showPreview").as_ref() {
+		let (old, s): (SceneSettings, SceneSettings) = (read(old), k.settings());
+		if old.scene != s.scene || old.show_preview != s.show_preview {
 			scene(k).shot = None;
 		}
 		if !k.online() {
@@ -111,47 +127,43 @@ impl Behavior for SmartScene {
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let name = k.s_val("scene");
-		let has = truthy(Some(&name));
+		let s: SceneSettings = k.settings();
 		let data = k.data();
-		let name = js::str_or_empty(Some(&name));
-		let live = has && data.program_scene.as_deref() == Some(name.as_str());
-		let preview = has && data.studio_mode && data.preview_scene.as_deref() == Some(name.as_str());
-		let (live_color, preview_color) = (k.s_str("liveColor"), k.s_str("previewColor"));
+		let name = Some(s.scene.as_str()).filter(|n| !n.is_empty());
+		let live = name.is_some() && data.program_scene.as_deref() == name;
+		let preview = name.is_some() && data.studio_mode && data.preview_scene.as_deref() == name;
 		let border = if live {
-			Some(if is_color(&live_color) { live_color.as_str() } else { colors::RED })
+			Some(if is_color(&s.live_color) { s.live_color.as_str() } else { colors::RED })
 		} else if preview {
-			Some(if is_color(&preview_color) { preview_color.as_str() } else { colors::GREEN })
+			Some(if is_color(&s.preview_color) { s.preview_color.as_str() } else { colors::GREEN })
 		} else {
 			None
 		};
-		let title = scene_title(k);
+		let title = scene_title(&s);
 		k.own_title(&title);
-		let shot = if k.s_truthy("showPreview") { scene(k).shot.clone() } else { None };
-		let fit = k.s_str("previewFit");
-		k.set_image(&scene_key(&SceneKey { image: shot.as_deref(), border, fit: &fit, title: &title, ..Default::default() }));
+		let shot = if s.show_preview { scene(k).shot.clone() } else { None };
+		k.set_image(&scene_key(&SceneKey { image: shot.as_deref(), border, fit: &s.preview_fit, title: &title, ..Default::default() }));
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
-		let name = k.s_val("scene");
-		if !truthy(Some(&name)) {
+		let s: SceneSettings = k.settings();
+		if s.scene.is_empty() {
 			return Err("no scene selected".into());
 		}
 		let data = k.data();
-		let op = press.op;
-		if op == "preview" {
+		if press.op == "preview" {
 			if !data.studio_mode {
 				return Err("studio mode is off".into());
 			}
-			k.call("SetCurrentPreviewScene", json!({ "sceneName": name })).await?;
-		} else if op == "switch" && data.studio_mode && !k.is_in_multi_action() {
-			if data.preview_scene.map(Value::from).as_ref() == Some(&name) {
+			k.call("SetCurrentPreviewScene", json!({ "sceneName": s.scene })).await?;
+		} else if press.op == "switch" && data.studio_mode && !k.is_in_multi_action() {
+			if data.preview_scene.as_deref() == Some(s.scene.as_str()) {
 				k.call("TriggerStudioModeTransition", json!({})).await?;
 			} else {
-				k.call("SetCurrentPreviewScene", json!({ "sceneName": name })).await?;
+				k.call("SetCurrentPreviewScene", json!({ "sceneName": s.scene })).await?;
 			}
 		} else {
-			k.call("SetCurrentProgramScene", json!({ "sceneName": name })).await?;
+			k.call("SetCurrentProgramScene", json!({ "sceneName": s.scene })).await?;
 		}
 		Ok(())
 	}
@@ -196,16 +208,15 @@ impl Behavior for StudioMode {
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let current = k.data().studio_mode;
-		let mode = press.op;
 		// take: the transition button of OBS, the preview goes live.
-		if mode == "take" {
+		if press.op == "take" {
 			if !current {
 				return Err("studio mode is off".into());
 			}
 			k.call("TriggerStudioModeTransition", json!({})).await?;
 			return Ok(());
 		}
-		let enabled = match mode.as_str() {
+		let enabled = match press.op.as_str() {
 			"enable" => true,
 			"disable" => false,
 			_ => !current,
@@ -233,7 +244,7 @@ struct PreviousScene;
 impl Behavior for PreviousScene {
 	fn render(&self, k: &KeyRc) {
 		let previous = k.data().previous_scene().unwrap_or_default();
-		k.glyph_for_title(if k.s_truthy("showName") { &previous } else { "" });
+		k.glyph_for_title(if k.settings::<ShowName>().show_name { &previous } else { "" });
 	}
 
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
@@ -253,10 +264,18 @@ pub static PREVIOUS_SCENE: Kind = Kind {
 
 // ----- Next Scene -----
 
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct NextSettings {
+	direction: String,
+	wrap: bool,
+	show_name: bool,
+}
+
 struct NextScene;
 
-fn next_target(k: &KeyRc, program: Option<&str>, direction: &str) -> Option<String> {
-	let scenes = k.data().scenes;
+/// The scene after (or before) the live one in the scene list.
+fn next_target(scenes: &[String], program: Option<&str>, direction: &str, wrap: bool) -> Option<String> {
 	if scenes.is_empty() {
 		return None;
 	}
@@ -264,7 +283,7 @@ fn next_target(k: &KeyRc, program: Option<&str>, direction: &str) -> Option<Stri
 	let index = program.and_then(|p| scenes.iter().position(|s| s == p)).map_or(-1, |i| i as i64);
 	let mut next = index + if direction == "previous" { -1 } else { 1 };
 	if next < 0 || next >= len {
-		if !k.s_truthy("wrap") {
+		if !wrap {
 			return None;
 		}
 		next = (next + len).rem_euclid(len);
@@ -273,32 +292,34 @@ fn next_target(k: &KeyRc, program: Option<&str>, direction: &str) -> Option<Stri
 }
 
 // The icon points where a press goes: on in the list, or up.
-fn next_glyph(k: &KeyRc) -> &'static str {
-	if k.s_str("direction") == "previous" { "previous" } else { "next" }
+fn next_glyph(s: &NextSettings) -> &'static str {
+	if s.direction == "previous" { "previous" } else { "next" }
 }
 
 #[async_trait(?Send)]
 impl Behavior for NextScene {
 	fn render_offline(&self, k: &KeyRc) {
-		k.set_image(&glyph_key(next_glyph(k), &GlyphKey::default()));
+		k.set_image(&glyph_key(next_glyph(&k.settings()), &GlyphKey::default()));
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let program = k.data().program_scene;
-		let title = if k.s_truthy("showName") {
-			next_target(k, program.as_deref(), &k.s_str("direction")).unwrap_or_default()
+		let s: NextSettings = k.settings();
+		let data = k.data();
+		let title = if s.show_name {
+			next_target(&data.scenes, data.program_scene.as_deref(), &s.direction, s.wrap).unwrap_or_default()
 		} else {
 			String::new()
 		};
 		k.own_title(&title);
-		k.set_image(&glyph_key(next_glyph(k), &GlyphKey { title: &title, ..Default::default() }));
+		k.set_image(&glyph_key(next_glyph(&s), &GlyphKey { title: &title, ..Default::default() }));
 	}
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		// Ask OBS, the cached scene can lag behind a fast double press.
 		let current = k.call("GetCurrentProgramScene", json!({})).await?;
-		let program = current.get("sceneName").and_then(Value::as_str).map(String::from);
-		let Some(target) = next_target(k, program.as_deref(), &press.op) else { return Err("no next scene".into()) };
+		let program = current.get("sceneName").and_then(Value::as_str);
+		let wrap = k.settings::<NextSettings>().wrap;
+		let Some(target) = next_target(&k.data().scenes, program, &press.op, wrap) else { return Err("no next scene".into()) };
 		k.call("SetCurrentProgramScene", json!({ "sceneName": target })).await?;
 		Ok(())
 	}
@@ -316,21 +337,31 @@ pub static NEXT_SCENE: Kind = Kind {
 
 // ----- Set Transition -----
 
-struct SetTransition;
-
-fn transition_active(k: &KeyRc) -> bool {
-	let transition = k.s_val("transition");
-	let duration = k.s_val("duration");
-	let current = k.data().transition;
-	if !truthy(Some(&transition)) || current.name.map(Value::from).as_ref() != Some(&transition) {
-		return false;
-	}
-	duration == "" || duration.is_null() || current.duration.is_none() || Some(js::number(Some(&duration))) == current.duration
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct TransitionSettings {
+	transition: String,
+	/// In ms. Empty: keep the duration the transition has.
+	#[serde(deserialize_with = "settings::optional_number")]
+	duration: Option<f64>,
+	show_name: bool,
 }
 
-fn transition_title(k: &KeyRc) {
-	let title = if k.s_truthy("showName") { k.s_str("transition") } else { String::new() };
-	k.glyph_for_title(&title);
+struct SetTransition;
+
+fn transition_active(k: &KeyRc, s: &TransitionSettings) -> bool {
+	let current = k.data().transition;
+	if s.transition.is_empty() || current.name.as_deref() != Some(s.transition.as_str()) {
+		return false;
+	}
+	match (s.duration, current.duration) {
+		(Some(wanted), Some(now)) => wanted == now,
+		_ => true,
+	}
+}
+
+fn transition_title(k: &KeyRc, s: &TransitionSettings) {
+	k.glyph_for_title(if s.show_name { &s.transition } else { "" });
 }
 
 #[async_trait(?Send)]
@@ -338,26 +369,25 @@ impl Behavior for SetTransition {
 	// Offline it is not the active transition, so it is gray.
 	fn render_offline(&self, k: &KeyRc) {
 		k.set_state(0);
-		transition_title(k);
+		transition_title(k, &k.settings());
 	}
 
 	fn render(&self, k: &KeyRc) {
-		k.set_state(if transition_active(k) { 1 } else { 0 });
-		transition_title(k);
+		let s: TransitionSettings = k.settings();
+		k.set_state(if transition_active(k, &s) { 1 } else { 0 });
+		transition_title(k, &s);
 	}
 
 	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
-		let transition = k.s_val("transition");
-		if !truthy(Some(&transition)) {
+		let s: TransitionSettings = k.settings();
+		if s.transition.is_empty() {
 			return Err("no transition selected".into());
 		}
-		k.call("SetCurrentSceneTransition", json!({ "transitionName": transition })).await?;
-		let duration = k.s("duration");
-		let number = js::number(duration.as_ref());
-		if duration.as_ref().is_some_and(|d| *d != "" && !d.is_null()) && number >= 50.0 {
+		k.call("SetCurrentSceneTransition", json!({ "transitionName": s.transition })).await?;
+		if let Some(duration) = s.duration.filter(|d| *d >= 50.0) {
 			// Fixed transitions like Cut have no duration.
 			if let Err(error) =
-				k.call("SetCurrentSceneTransitionDuration", json!({ "transitionDuration": js::num(js::round(number)) })).await
+				k.call("SetCurrentSceneTransitionDuration", json!({ "transitionDuration": js::num(js::round(duration)) })).await
 			{
 				k.log(&format!("duration not set: {error}"));
 			}
@@ -375,3 +405,26 @@ pub static SET_TRANSITION: Kind = Kind {
 	behavior: &SetTransition,
 	..Kind::BASE
 };
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::settings::testing::assert_defaults;
+
+	#[test]
+	fn every_setting_has_a_default() {
+		assert_defaults::<SceneSettings>(&[&SMART_SCENE]);
+		assert_defaults::<ShowName>(&[&PREVIOUS_SCENE]);
+		assert_defaults::<NextSettings>(&[&NEXT_SCENE]);
+		assert_defaults::<TransitionSettings>(&[&SET_TRANSITION]);
+	}
+
+	#[test]
+	fn next_scene_wraps_only_when_asked() {
+		let scenes = ["A".to_string(), "B".to_string()];
+		assert_eq!(next_target(&scenes, Some("B"), "next", false), None);
+		assert_eq!(next_target(&scenes, Some("B"), "next", true).as_deref(), Some("A"));
+		assert_eq!(next_target(&scenes, Some("A"), "previous", true).as_deref(), Some("B"));
+		assert_eq!(next_target(&scenes, None, "next", false).as_deref(), Some("A"));
+	}
+}

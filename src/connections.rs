@@ -5,12 +5,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::emitter::Emitter;
 use crate::js::{self, fmt};
 use crate::obs::{ObsClient, Status};
 use crate::obs_state::ObsState;
+use crate::settings;
 use crate::timers::{Timer, set_timeout};
 
 const IDLE_STOP_DELAY: f64 = 30000.0;
@@ -79,17 +81,19 @@ pub struct Resolved {
 	pub password: String,
 }
 
+/// The OBS of the setup, as the global settings keep it.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct Global {
+	pub host: String,
+	pub port: f64,
+	pub password: String,
+}
+
 /// Turns the saved settings into the host, port and password to use.
-pub fn resolve_connection(settings: &Map<String, Value>) -> Resolved {
-	let mut merged = default_global();
-	js::assign(&mut merged, settings);
-	let host = merged.get("host");
-	let password = merged.get("password");
-	Resolved {
-		host: js::trim(&if js::truthy(host) { js::to_string(host) } else { "127.0.0.1".into() }).to_string(),
-		port: js::number_or(merged.get("port"), 4455.0),
-		password: js::str_or_empty(password),
-	}
+pub fn resolve_connection(g: &Global) -> Resolved {
+	let host = if g.host.is_empty() { "127.0.0.1" } else { &g.host };
+	Resolved { host: js::trim(host).to_string(), port: settings::or(g.port, 4455.0), password: g.password.clone() }
 }
 
 pub fn connection_key(c: &Resolved) -> String {
@@ -167,7 +171,7 @@ impl ConnectionManager {
 			log: Box::new(log),
 			entries: RefCell::new(HashMap::new()),
 			global_settings: RefCell::new(default_global()),
-			default_config: RefCell::new(resolve_connection(&default_global())),
+			default_config: RefCell::new(resolve_connection(&settings::read(&default_global()))),
 			me: me.clone(),
 			on_default_changed: Emitter::default(),
 			on_status: Emitter::default(),
@@ -186,7 +190,7 @@ impl ConnectionManager {
 	}
 
 	fn check_default(&self, force: bool) {
-		let next = resolve_connection(&self.global_settings.borrow());
+		let next = resolve_connection(&settings::read(&self.global_settings.borrow()));
 		let changed = connection_key(&next) != connection_key(&self.default_config.borrow());
 		*self.default_config.borrow_mut() = next.clone();
 		if changed || force {
@@ -292,7 +296,7 @@ mod tests {
 
 	#[test]
 	fn saved_settings_never_read_from_obs_by_itself() {
-		let r = |v| resolve_connection(&map(v));
+		let r = |v| resolve_connection(&settings::read(&map(v)));
 		assert_eq!(
 			r(json!({ "host": " localhost ", "password": "typed" })),
 			Resolved { host: "localhost".into(), port: 4455.0, password: "typed".into() }

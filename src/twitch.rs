@@ -442,8 +442,8 @@ impl Twitch {
 	}
 
 	/// Login with a Client ID of a "Public" app from dev.twitch.tv (device code flow).
-	pub async fn start_device_flow(&self, client_id: Option<&Value>) -> Res<Flow> {
-		let client_id = js::trim(&js::str_or_empty(client_id)).to_string();
+	pub async fn start_device_flow(&self, client_id: &str) -> Res<Flow> {
+		let client_id = js::trim(client_id).to_string();
 		if client_id.is_empty() {
 			return Err("Enter the Client ID of your Twitch app first".into());
 		}
@@ -507,7 +507,7 @@ impl Twitch {
 				if response.ok() && truthy(data.get("access_token")) {
 					*self.device_flow.borrow_mut() = None;
 					let refresh = js::str_or_empty(data.get("refresh_token"));
-					self.use_token(data.get("access_token"), &refresh, &flow.client_id).await?;
+					self.use_token(&js::str_or_empty(data.get("access_token")), &refresh, &flow.client_id).await?;
 					return Ok(true);
 				}
 				let message = data.get("message");
@@ -541,8 +541,8 @@ impl Twitch {
 	}
 
 	/// Checks a token and stores it with the user it belongs to.
-	pub async fn use_token(&self, token: Option<&Value>, refresh_token: &str, client_id: &str) -> Res<Value> {
-		let token = js::trim(&js::str_or_empty(token)).to_string();
+	pub async fn use_token(&self, token: &str, refresh_token: &str, client_id: &str) -> Res<Value> {
+		let token = js::trim(token).to_string();
 		let token = if token.len() >= 6 && token[..6].eq_ignore_ascii_case("oauth:") { token[6..].to_string() } else { token };
 		let response =
 			fetch("GET", "https://id.twitch.tv/oauth2/validate".into(), vec![("Authorization", format!("OAuth {token}"))], None).await?;

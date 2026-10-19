@@ -1,6 +1,6 @@
-// Reads loose JSON the way JavaScript does (truthiness, Number(), String()): the settings pages are
-// JavaScript and send settings like that. Numbers turn into text like toFixed() and Math.round() do,
-// so key texts are the same as the ones pi/lib/render.js draws.
+// JavaScript behaviour the plugin needs. settings.rs reads the loose JSON of the settings pages with
+// truthy(), number() and to_string(). Numbers turn into text like toFixed() and Math.round() do, so
+// key texts are the same as the ones pi/lib/render.js draws.
 use serde_json::{Map, Number, Value};
 
 /// A missing key is `undefined`, a JSON null is `null`. Some coercions tell them apart.
