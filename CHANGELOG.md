@@ -2,6 +2,12 @@
 
 What each release brings, newest first.
 
+## v0.2.1
+
+_19 October 2026_
+
+A cleanup inside the plugin. Your keys and settings work just like before.
+
 ## v0.2.0
 
 _19 October 2026_

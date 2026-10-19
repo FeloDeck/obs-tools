@@ -2,7 +2,7 @@
 	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
 	"UUID": "de.felitendo.obs-tools",
 	"Name": "OBS Tools",
-	"Version": "0.2.0",
+	"Version": "0.2.1",
 	"Author": "Felitendo",
 	"Description": "Advanced OBS tools for OpenDeck on Linux: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
 	"URL": "https://github.com/FeloDeck/obs-tools",
