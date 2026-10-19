@@ -1,2 +1,4 @@
 dist/
-node_modules/
+target/
+de.felitendo.obs-tools.sdPlugin/bin/
+tools/virtual-deck/de.felitendo.virtual-deck.sdPlugin/virtual-deck

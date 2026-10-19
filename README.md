@@ -27,12 +27,14 @@
 
 ## Install
 
-You need OpenDeck 2, Node.js 22 or newer and OBS 28 or newer.
+You need OpenDeck 2 and OBS 28 or newer, on Linux with an x86_64 or ARM64 CPU.
 
 In OpenDeck, click **Plugins** and install **OBS Tools** from the **Plugin store**.
 
 <details>
 <summary>From source, or a plugin file</summary>
+
+You need [Rust](https://rustup.rs).
 
 ```bash
 git clone https://github.com/FeloDeck/obs-tools.git
@@ -46,7 +48,7 @@ Then restart OpenDeck. With the OpenDeck Flatpak, install into its folder:
 make install PLUGINS=~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins
 ```
 
-`make package` builds `dist/de.felitendo.obs-tools.streamDeckPlugin`. You can install that file on the **Plugins** page of OpenDeck.
+`make package` builds `dist/de.felitendo.obs-tools.streamDeckPlugin` for x86_64 and ARM64 (it needs zig and cargo-zigbuild). You can install that file on the **Plugins** page of OpenDeck.
 
 </details>
 

@@ -5,7 +5,7 @@
 	"Version": "0.1.0",
 	"Icon": "icon",
 	"Category": "Virtual Stream Deck",
-	"CodePath": "main.js",
+	"CodePath": "virtual-deck",
 	"DeviceNamespace": "vd",
 	"OS": [{ "Platform": "linux" }],
 	"Actions": []

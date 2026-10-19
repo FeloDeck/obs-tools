@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Tools to build, package and test OBS Tools: cargo xtask <command>"
+
+[dependencies]
+obs-tools = { path = ".." }
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt", "time", "macros", "process"] }
+ureq = { version = "3", default-features = false }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }

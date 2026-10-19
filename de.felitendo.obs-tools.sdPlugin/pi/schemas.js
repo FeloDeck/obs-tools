@@ -7,12 +7,12 @@
 // tiles: for choices that change how the key looks. Like segmented, with a small picture of the
 // key above each choice: preview(value, settings) is its SVG. value(settings) and apply(value)
 // can map the choice onto more than one setting.
-// The texts are English. i18n.js has the other languages.
-import { num, t } from "../plugin/lib/i18n.js";
-import { COLORS, MEDIA_GLYPHS, VOLUME_GLYPHS } from "../plugin/lib/icons.js";
-import { glyphKeySvg, sceneKeySvg, statKeySvg } from "../plugin/lib/render.js";
-import { TEXT_ACTIONS, textUses } from "../plugin/lib/text-gestures.js";
-import { formatVolume } from "../plugin/lib/volume.js";
+// The texts are English. src/i18n/de.rs has the German ones.
+import { num, t } from "./lib/i18n.js";
+import { COLORS, MEDIA_GLYPHS, VOLUME_GLYPHS } from "./lib/icons.js";
+import { glyphKeySvg, sceneKeySvg, statKeySvg } from "./lib/render.js";
+import { TEXT_ACTIONS, textUses } from "./lib/text-gestures.js";
+import { formatVolume } from "./lib/volume.js";
 
 export const CONTROLS = "Controls";
 export const LOOK = "look";

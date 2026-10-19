@@ -9,9 +9,10 @@
 	"Icon": "images/plugin",
 	"Category": "OBS Tools",
 	"CategoryIcon": "images/category",
-	"CodePath": "plugin/main.js",
-	"Nodejs": {
-		"Version": "22"
+	"CodePath": "bin/x86_64-unknown-linux-gnu/obs-tools",
+	"CodePaths": {
+		"x86_64-unknown-linux-gnu": "bin/x86_64-unknown-linux-gnu/obs-tools",
+		"aarch64-unknown-linux-gnu": "bin/aarch64-unknown-linux-gnu/obs-tools"
 	},
 	"PropertyInspectorPath": "pi/index.html",
 	"SDKVersion": 2,

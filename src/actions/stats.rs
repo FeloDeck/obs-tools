@@ -1,0 +1,444 @@
+use std::rc::Rc;
+
+use async_trait::async_trait;
+use serde_json::{Map, Value, json};
+
+use super::{Behavior, KeyRc, Kind, PressArgs, Stop, defaults};
+use crate::Res;
+use crate::i18n::{num, t, t_with};
+use crate::icons::colors;
+use crate::js::{self, truthy};
+use crate::render::{StatKey, is_color, stat_key};
+use crate::time::{format_duration, timecode_seconds};
+
+/// Every stats key: polls the stats of OBS while it is shown.
+#[derive(Default)]
+struct StatsSubscription {
+	unsubscribe: Option<Stop>,
+}
+
+trait StatsKey {
+	fn sub(k: &KeyRc) -> std::cell::RefMut<'_, StatsSubscription>;
+	fn on_stats(k: &KeyRc, stats: &Value);
+}
+
+fn subscribe<S: StatsKey + 'static>(k: &KeyRc) {
+	unsubscribe::<S>(k);
+	let Some(state) = k.obs_state() else { return };
+	let off = state.subscribe_stats();
+	let weak = Rc::downgrade(k);
+	let id = state.on_stats.on(move |stats| {
+		if let Some(k) = weak.upgrade() {
+			S::on_stats(&k, stats);
+		}
+	});
+	let listening = state.clone();
+	S::sub(k).unsubscribe = Some(Rc::new(move || {
+		off();
+		listening.on_stats.off(id);
+	}));
+	if let Some(stats) = state.stats() {
+		S::on_stats(k, &stats);
+	}
+}
+
+fn unsubscribe<S: StatsKey>(k: &KeyRc) {
+	let stop = S::sub(k).unsubscribe.take();
+	if let Some(stop) = stop {
+		stop();
+	}
+}
+
+// ----- OBS CPU Usage -----
+
+#[derive(Default)]
+struct CpuState {
+	sub: StatsSubscription,
+	stats: Option<Value>,
+}
+
+struct CpuUsage;
+
+impl StatsKey for CpuUsage {
+	fn sub(k: &KeyRc) -> std::cell::RefMut<'_, StatsSubscription> {
+		std::cell::RefMut::map(k.x::<CpuState>(), |s| &mut s.sub)
+	}
+
+	fn on_stats(k: &KeyRc, stats: &Value) {
+		k.x::<CpuState>().stats = Some(stats.clone());
+		k.render();
+	}
+}
+
+#[async_trait(?Send)]
+impl Behavior for CpuUsage {
+	async fn on_connected(&self, k: &KeyRc) -> Res<()> {
+		subscribe::<CpuUsage>(k);
+		Ok(())
+	}
+
+	fn on_disconnected(&self, k: &KeyRc) {
+		unsubscribe::<CpuUsage>(k);
+	}
+
+	fn on_disappear(&self, k: &KeyRc) {
+		unsubscribe::<CpuUsage>(k);
+	}
+
+	fn render(&self, k: &KeyRc) {
+		let Some(stats) = k.x::<CpuState>().stats.clone() else { return };
+		let cpu = js::number_or(stats.get("cpuUsage"), 0.0);
+		let warn_at = k.s_num("warnAt");
+		let warn = warn_at > 0.0 && cpu >= warn_at;
+		let value = format!("{}%", num(cpu, if cpu >= 100.0 { 0 } else { 1 }));
+		let sub = if k.s_truthy("showMemory") {
+			format!("{} MB", js::fmt(js::round(js::number(stats.get("memoryUsage")))))
+		} else {
+			String::new()
+		};
+		let label = t("OBS CPU");
+		k.set_image(&stat_key(&StatKey {
+			label: &label,
+			value: &value,
+			sub: &sub,
+			bar: Some(js::min(1.0, cpu / 100.0)),
+			color: if warn { colors::RED } else { colors::BLUE },
+			alert: if warn { Some(colors::RED) } else { None },
+			dot: None,
+		}));
+	}
+}
+
+pub static CPU_USAGE: Kind = Kind {
+	uuid: "de.felitendo.obs-tools.cpuusage",
+	name: "CpuUsage",
+	defaults: || defaults(json!({ "warnAt": 50, "showMemory": false })),
+	press_key: "",
+	ops: &[],
+	press_only: &[],
+	can_repeat: false,
+	required: &[],
+	behavior: &CpuUsage,
+	new_state: || Box::new(CpuState::default()),
+};
+
+// ----- Dropped Frames Alarm: shows the frame count and flashes when it goes up. -----
+
+/// The count and the total, or nothing (not live).
+type Frames = Option<(Option<f64>, Option<f64>)>;
+
+struct FrameType {
+	label: &'static str,
+	read: fn(&Value) -> Frames,
+}
+
+fn n(v: Option<&Value>) -> Option<f64> {
+	match v {
+		None | Some(Value::Null) => None,
+		v => Some(js::number(v)),
+	}
+}
+
+fn frame_type(name: &str) -> &'static FrameType {
+	static DROPPED: FrameType = FrameType {
+		label: "DROPPED",
+		read: |s| {
+			let stream = s.get("stream");
+			if truthy(stream.and_then(|st| st.get("outputActive"))) {
+				Some((n(stream.and_then(|st| st.get("outputSkippedFrames"))), n(stream.and_then(|st| st.get("outputTotalFrames")))))
+			} else {
+				None
+			}
+		},
+	};
+	static SKIPPED: FrameType =
+		FrameType { label: "SKIPPED", read: |s| Some((n(s.get("outputSkippedFrames")), n(s.get("outputTotalFrames")))) };
+	static MISSED: FrameType =
+		FrameType { label: "MISSED", read: |s| Some((n(s.get("renderSkippedFrames")), n(s.get("renderTotalFrames")))) };
+	match name {
+		"skipped" => &SKIPPED,
+		"missed" => &MISSED,
+		_ => &DROPPED,
+	}
+}
+
+#[derive(Default)]
+struct DroppedState {
+	sub: StatsSubscription,
+	count: Option<f64>,
+	total: Option<f64>,
+	baseline: Option<f64>,
+	alert_until: f64,
+	flash: bool,
+}
+
+struct DroppedFrames;
+
+fn dropped(k: &KeyRc) -> std::cell::RefMut<'_, DroppedState> {
+	k.x::<DroppedState>()
+}
+
+impl StatsKey for DroppedFrames {
+	fn sub(k: &KeyRc) -> std::cell::RefMut<'_, StatsSubscription> {
+		std::cell::RefMut::map(dropped(k), |s| &mut s.sub)
+	}
+
+	fn on_stats(k: &KeyRc, stats: &Value) {
+		let kind = frame_type(&k.s_str("frameType"));
+		let threshold = js::max(1.0, k.s_num_or("threshold", 1.0));
+		let alert_seconds = js::max(1.0, k.s_num_or("alertSeconds", 10.0));
+		{
+			let mut s = dropped(k);
+			match (kind.read)(stats) {
+				None => {
+					s.count = None;
+					s.baseline = None;
+					s.alert_until = 0.0;
+				}
+				Some((count, total)) => {
+					let below = matches!((count, s.baseline), (Some(c), Some(b)) if c < b);
+					if s.baseline.is_none() || below {
+						s.baseline = count;
+					}
+					if let (Some(c), Some(b)) = (count, s.baseline)
+						&& c - b >= threshold
+					{
+						s.alert_until = js::now() as f64 + alert_seconds * 1000.0;
+						s.baseline = count;
+					}
+					s.count = count;
+					s.total = total;
+				}
+			}
+			s.flash = !s.flash;
+		}
+		k.render();
+	}
+}
+
+#[async_trait(?Send)]
+impl Behavior for DroppedFrames {
+	async fn on_connected(&self, k: &KeyRc) -> Res<()> {
+		subscribe::<DroppedFrames>(k);
+		Ok(())
+	}
+
+	fn on_disconnected(&self, k: &KeyRc) {
+		unsubscribe::<DroppedFrames>(k);
+	}
+
+	fn on_disappear(&self, k: &KeyRc) {
+		unsubscribe::<DroppedFrames>(k);
+	}
+
+	async fn on_settings_changed(&self, k: &KeyRc, old: &Map<String, Value>) -> Res<()> {
+		if old.get("frameType") != k.s("frameType").as_ref() {
+			let mut s = dropped(k);
+			s.baseline = None;
+			s.alert_until = 0.0;
+		}
+		Ok(())
+	}
+
+	fn render(&self, k: &KeyRc) {
+		let frame = k.s_str("frameType");
+		let kind = frame_type(&frame);
+		let (count, total, alert_until, flash) = {
+			let s = dropped(k);
+			(s.count, s.total, s.alert_until, s.flash)
+		};
+		let alerting = alert_until > js::now() as f64;
+		let color = k.s_str("alertColor");
+		let color = if is_color(&color) { color } else { colors::RED.to_string() };
+		let label = t(kind.label);
+		let Some(count) = count else {
+			let sub = if frame == "dropped" { t("not live") } else { String::new() };
+			k.set_image(&stat_key(&StatKey { label: &label, value: "-", sub: &sub, ..Default::default() }));
+			return;
+		};
+		let total = total.unwrap_or(f64::NAN);
+		let pct = if total > 0.0 { (count / total) * 100.0 } else { 0.0 };
+		let value = js::fmt(count);
+		let sub = format!("{}%", num(pct, if pct >= 10.0 { 0 } else { 1 }));
+		k.set_image(&stat_key(&StatKey {
+			label: &label,
+			value: &value,
+			sub: &sub,
+			alert: if alerting && flash { Some(&color) } else { None },
+			..Default::default()
+		}));
+	}
+
+	// Press: stop the alarm and count from here.
+	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+		{
+			let mut s = dropped(k);
+			s.alert_until = 0.0;
+			s.baseline = s.count;
+		}
+		self.render(k);
+		Ok(())
+	}
+}
+
+pub static DROPPED_FRAMES: Kind = Kind {
+	uuid: "de.felitendo.obs-tools.droppedframes",
+	name: "DroppedFrames",
+	defaults: || defaults(json!({ "frameType": "dropped", "threshold": 1, "alertColor": colors::RED, "alertSeconds": 10 })),
+	press_key: "",
+	ops: &[],
+	press_only: &[],
+	can_repeat: false,
+	required: &[],
+	behavior: &DroppedFrames,
+	new_state: || Box::new(DroppedState::default()),
+};
+
+// ----- Stream Health: bitrate (or time), recent drops, and a green, yellow or red light. -----
+
+fn format_bitrate(kbps: Option<f64>) -> String {
+	match kbps {
+		Some(k) if k.is_finite() => {
+			if k >= 1000.0 {
+				format!("{} Mb/s", num(k / 1000.0, 1))
+			} else {
+				format!("{} kb/s", js::fmt(js::round(k)))
+			}
+		}
+		_ => "...".into(),
+	}
+}
+
+struct Health {
+	level: &'static str,
+	drops: f64,
+	kbps: Option<f64>,
+	timecode: String,
+	reconnecting: bool,
+}
+
+#[derive(Default)]
+struct HealthState {
+	sub: StatsSubscription,
+	samples: Vec<(f64, f64)>,
+	health: Option<Health>,
+}
+
+struct StreamHealth;
+
+fn health(k: &KeyRc) -> std::cell::RefMut<'_, HealthState> {
+	k.x::<HealthState>()
+}
+
+impl StatsKey for StreamHealth {
+	fn sub(k: &KeyRc) -> std::cell::RefMut<'_, StatsSubscription> {
+		std::cell::RefMut::map(health(k), |s| &mut s.sub)
+	}
+
+	fn on_stats(k: &KeyRc, stats: &Value) {
+		let warn = k.s_num_or("warnDrops", 1.0);
+		let bad = k.s_num_or("badDrops", 5.0);
+		{
+			let stream = stats.get("stream");
+			let get = |key: &str| stream.and_then(|s| s.get(key));
+			let mut s = health(k);
+			if !truthy(get("outputActive")) {
+				s.samples.clear();
+				s.health = None;
+			} else {
+				// Drops of the last 10 seconds, so an old problem does not keep the key red.
+				let or0 = |v: Option<&Value>| match v {
+					None | Some(Value::Null) => 0.0,
+					v => js::number(v),
+				};
+				s.samples.push((or0(get("outputSkippedFrames")), or0(get("outputTotalFrames"))));
+				if s.samples.len() > 11 {
+					s.samples.remove(0);
+				}
+				let (first, last) = (s.samples[0], s.samples[s.samples.len() - 1]);
+				let frames = last.1 - first.1;
+				let drops = if frames > 0.0 { ((last.0 - first.0) / frames) * 100.0 } else { 0.0 };
+				let congestion = js::number_or(get("outputCongestion"), 0.0);
+				let reconnecting = truthy(get("outputReconnecting"));
+				let level = if reconnecting || drops >= bad || congestion >= 0.5 {
+					"bad"
+				} else if drops >= warn || congestion >= 0.15 {
+					"warn"
+				} else {
+					"good"
+				};
+				s.health = Some(Health {
+					level,
+					drops: js::max(0.0, drops),
+					kbps: get("kbps").and_then(Value::as_f64),
+					timecode: js::str_or_empty(get("outputTimecode")),
+					reconnecting,
+				});
+			}
+		}
+		k.render();
+	}
+}
+
+#[async_trait(?Send)]
+impl Behavior for StreamHealth {
+	async fn on_connected(&self, k: &KeyRc) -> Res<()> {
+		subscribe::<StreamHealth>(k);
+		Ok(())
+	}
+
+	fn on_disconnected(&self, k: &KeyRc) {
+		unsubscribe::<StreamHealth>(k);
+	}
+
+	fn on_disappear(&self, k: &KeyRc) {
+		unsubscribe::<StreamHealth>(k);
+	}
+
+	fn render(&self, k: &KeyRc) {
+		let show_time = k.s_str("show") == "time";
+		let (label, value, sub, dot) = {
+			let s = health(k);
+			let Some(h) = &s.health else {
+				drop(s);
+				let (label, value) = (t("STREAM"), t("off"));
+				k.set_image(&stat_key(&StatKey { label: &label, value: &value, dot: Some(colors::GRAY), ..Default::default() }));
+				return;
+			};
+			let dot = match h.level {
+				"good" => colors::GREEN,
+				"warn" => colors::AMBER,
+				_ => colors::RED,
+			};
+			let value = if h.reconnecting {
+				"...".to_string()
+			} else if show_time {
+				format_duration(timecode_seconds(&h.timecode))
+			} else {
+				format_bitrate(h.kbps)
+			};
+			let sub = if h.reconnecting {
+				t("reconnecting")
+			} else if show_time {
+				format_bitrate(h.kbps)
+			} else {
+				t_with("drops {pct}%", &[("pct", &num(h.drops, if h.drops >= 10.0 { 0 } else { 1 }))])
+			};
+			(t("LIVE"), value, sub, dot)
+		};
+		k.set_image(&stat_key(&StatKey { label: &label, value: &value, sub: &sub, dot: Some(dot), ..Default::default() }));
+	}
+}
+
+pub static STREAM_HEALTH: Kind = Kind {
+	uuid: "de.felitendo.obs-tools.streamhealth",
+	name: "StreamHealth",
+	defaults: || defaults(json!({ "show": "bitrate", "warnDrops": 1, "badDrops": 5 })),
+	press_key: "",
+	ops: &[],
+	press_only: &[],
+	can_repeat: false,
+	required: &[],
+	behavior: &StreamHealth,
+	new_state: || Box::new(HealthState::default()),
+};

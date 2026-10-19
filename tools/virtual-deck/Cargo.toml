@@ -1,0 +1,13 @@
+[package]
+name = "virtual-deck"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "A Stream Deck in the browser, for testing OpenDeck plugins without hardware"
+
+[dependencies]
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+tokio-tungstenite = "0.28"

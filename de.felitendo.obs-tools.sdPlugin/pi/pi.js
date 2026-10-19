@@ -1,5 +1,5 @@
 // Settings page for every OBS Tools action. The fields come from schemas.js.
-import { setLanguage, t, translateMessage } from "../plugin/lib/i18n.js";
+import { setLanguage, t, translateMessage } from "./lib/i18n.js";
 import { CONTROLS, LOOK, SCHEMAS } from "./schemas.js";
 
 const FIELD_LABELS = {

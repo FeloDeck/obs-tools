@@ -1,0 +1,384 @@
+// The bits of JavaScript behaviour the plugin relies on: truthiness, Number(), String(), toFixed(),
+// Math.round() and JSON.stringify(). Settings come from the settings page as loose JSON, so the keys
+// read them the way the JavaScript version of the plugin did.
+use serde_json::{Map, Number, Value};
+
+/// A missing key is `undefined`, a JSON null is `null`. Some coercions tell them apart.
+pub type Opt<'a> = Option<&'a Value>;
+
+pub fn truthy(v: Opt) -> bool {
+	match v {
+		None | Some(Value::Null) => false,
+		Some(Value::Bool(b)) => *b,
+		Some(Value::Number(n)) => {
+			let f = n.as_f64().unwrap_or(0.0);
+			f != 0.0 && !f.is_nan()
+		}
+		Some(Value::String(s)) => !s.is_empty(),
+		Some(Value::Array(_)) | Some(Value::Object(_)) => true,
+	}
+}
+
+/// Number(value).
+pub fn number(v: Opt) -> f64 {
+	match v {
+		None => f64::NAN,
+		Some(Value::Null) => 0.0,
+		Some(Value::Bool(b)) => f64::from(u8::from(*b)),
+		Some(Value::Number(n)) => n.as_f64().unwrap_or(f64::NAN),
+		Some(Value::String(s)) => string_to_number(s),
+		Some(Value::Array(a)) => match a.len() {
+			0 => 0.0,
+			1 => string_to_number(&to_string(Some(&a[0]))),
+			_ => f64::NAN,
+		},
+		Some(Value::Object(_)) => f64::NAN,
+	}
+}
+
+/// `Number(value) || fallback`.
+pub fn number_or(v: Opt, fallback: f64) -> f64 {
+	let n = number(v);
+	if n == 0.0 || n.is_nan() { fallback } else { n }
+}
+
+/// String.prototype.trim.
+pub fn trim(s: &str) -> &str {
+	s.trim_matches(is_js_space)
+}
+
+/// A number as a condition: 0 and NaN are false.
+pub fn truthy_num(x: f64) -> bool {
+	x != 0.0 && !x.is_nan()
+}
+
+pub fn is_js_space(c: char) -> bool {
+	matches!(
+		c,
+		'\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+			..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}'
+	)
+}
+
+/// The StringToNumber of JavaScript: "" is 0, " 12 " is 12, "0x1f" is 31, "abc" is NaN.
+pub fn string_to_number(s: &str) -> f64 {
+	let s = s.trim_matches(is_js_space);
+	if s.is_empty() {
+		return 0.0;
+	}
+	for (prefix, radix) in [("0x", 16), ("0X", 16), ("0o", 8), ("0O", 8), ("0b", 2), ("0B", 2)] {
+		if let Some(digits) = s.strip_prefix(prefix) {
+			if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+				return f64::NAN;
+			}
+			return digits.chars().fold(0.0, |acc, c| acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap_or(0)));
+		}
+	}
+	let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+	if unsigned == "Infinity" {
+		return if s.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+	}
+	// Rust also reads "inf" and "nan", JavaScript does not.
+	if !unsigned.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+		|| !unsigned.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
+	{
+		return f64::NAN;
+	}
+	s.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// String(value). `undefined` is "undefined".
+pub fn to_string(v: Opt) -> String {
+	match v {
+		None => "undefined".into(),
+		Some(Value::Null) => "null".into(),
+		Some(Value::Bool(b)) => b.to_string(),
+		Some(Value::Number(n)) => fmt(n.as_f64().unwrap_or(f64::NAN)),
+		Some(Value::String(s)) => s.clone(),
+		Some(Value::Array(a)) => {
+			a.iter().map(|x| if x.is_null() { String::new() } else { to_string(Some(x)) }).collect::<Vec<_>>().join(",")
+		}
+		Some(Value::Object(_)) => "[object Object]".into(),
+	}
+}
+
+/// `String(value ?? "")`.
+pub fn str_or_empty(v: Opt) -> String {
+	match v {
+		None | Some(Value::Null) => String::new(),
+		_ => to_string(v),
+	}
+}
+
+/// Digits and decimal exponent of the shortest form that reads back as the same number.
+fn shortest(x: f64) -> (String, i32) {
+	let s = format!("{:e}", x.abs());
+	let (mantissa, exp) = s.split_once('e').unwrap_or((&s, "0"));
+	let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+	(digits, exp.parse().unwrap_or(0))
+}
+
+/// Number to text like JavaScript: 1 not "1.0", 1e21 and 1e-7 in exponent form, -0 is "0".
+pub fn fmt(x: f64) -> String {
+	if x.is_nan() {
+		return "NaN".into();
+	}
+	if x == 0.0 {
+		return "0".into();
+	}
+	if x.is_infinite() {
+		return if x > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+	}
+	let sign = if x < 0.0 { "-" } else { "" };
+	let (digits, exp) = shortest(x);
+	let k = digits.len() as i32;
+	let n = exp + 1;
+	let body = if k <= n && n <= 21 {
+		format!("{digits}{}", "0".repeat((n - k) as usize))
+	} else if 0 < n && n <= 21 {
+		format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+	} else if -6 < n && n <= 0 {
+		format!("0.{}{digits}", "0".repeat((-n) as usize))
+	} else {
+		let e = n - 1;
+		let e = if e >= 0 { format!("+{e}") } else { e.to_string() };
+		if k == 1 { format!("{digits}e{e}") } else { format!("{}.{}e{e}", &digits[..1], &digits[1..]) }
+	};
+	format!("{sign}{body}")
+}
+
+/// Number.prototype.toFixed: rounds the exact value, a tie goes away from zero.
+pub fn to_fixed(x: f64, digits: usize) -> String {
+	if x.is_nan() {
+		return "NaN".into();
+	}
+	if x.abs() >= 1e21 {
+		return fmt(x);
+	}
+	// The exact decimal value of the double. 1100 places hold every f64 exactly.
+	let exact = format!("{:.1100}", x.abs());
+	let (int_part, frac_part) = exact.split_once('.').unwrap_or((&exact, ""));
+	let mut kept: Vec<u8> = int_part.bytes().chain(frac_part.bytes().take(digits)).collect();
+	let next = frac_part.as_bytes().get(digits).copied().unwrap_or(b'0');
+	if next >= b'5' {
+		let mut i = kept.len();
+		loop {
+			if i == 0 {
+				kept.insert(0, b'1');
+				break;
+			}
+			i -= 1;
+			if kept[i] == b'9' {
+				kept[i] = b'0';
+			} else {
+				kept[i] += 1;
+				break;
+			}
+		}
+	}
+	let int_len = kept.len() - digits;
+	let text = String::from_utf8(kept).unwrap_or_default();
+	let body = if digits == 0 { text } else { format!("{}.{}", &text[..int_len], &text[int_len..]) };
+	// -0.04 becomes "-0.0", like in JavaScript. -0 itself is not below 0.
+	if x < 0.0 { format!("-{body}") } else { body }
+}
+
+/// Math.round: a tie goes up (-2.5 becomes -2).
+pub fn round(x: f64) -> f64 {
+	if !x.is_finite() {
+		return x;
+	}
+	let floor = x.floor();
+	let r = if x - floor >= 0.5 { floor + 1.0 } else { floor };
+	// Math.round keeps the sign of zero: Math.round(-0.2) is -0.
+	if r == 0.0 && x.is_sign_negative() { -0.0 } else { r }
+}
+
+/// Math.max and Math.min: NaN wins.
+pub fn max(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.max(b) }
+}
+
+pub fn min(a: f64, b: f64) -> f64 {
+	if a.is_nan() || b.is_nan() { f64::NAN } else { a.min(b) }
+}
+
+/// A number for JSON, like JSON.stringify writes it: whole numbers without ".0", NaN as null.
+pub fn num(x: f64) -> Value {
+	if !x.is_finite() {
+		return Value::Null;
+	}
+	if x == x.trunc() && x.abs() < 9_007_199_254_740_992.0 {
+		return Value::Number(Number::from(x as i64));
+	}
+	Number::from_f64(x).map(Value::Number).unwrap_or(Value::Null)
+}
+
+/// JSON.stringify(value): no spaces, numbers like JavaScript writes them.
+pub fn stringify(v: &Value) -> String {
+	let mut out = String::new();
+	write_json(v, &mut out);
+	out
+}
+
+fn write_json(v: &Value, out: &mut String) {
+	match v {
+		Value::Number(n) => {
+			let f = n.as_f64().unwrap_or(f64::NAN);
+			if n.is_f64() {
+				if f.is_finite() { out.push_str(&fmt(f)) } else { out.push_str("null") }
+			} else {
+				out.push_str(&n.to_string());
+			}
+		}
+		Value::Array(items) => {
+			out.push('[');
+			for (i, item) in items.iter().enumerate() {
+				if i > 0 {
+					out.push(',');
+				}
+				write_json(item, out);
+			}
+			out.push(']');
+		}
+		Value::Object(map) => {
+			out.push('{');
+			for (i, (key, value)) in map.iter().enumerate() {
+				if i > 0 {
+					out.push(',');
+				}
+				out.push_str(&serde_json::to_string(key).unwrap_or_default());
+				out.push(':');
+				write_json(value, out);
+			}
+			out.push('}');
+		}
+		_ => out.push_str(&serde_json::to_string(v).unwrap_or_default()),
+	}
+}
+
+/// Equal as JSON.stringify would write them, except for the order of keys.
+pub fn same(a: &Value, b: &Value) -> bool {
+	match (a, b) {
+		(Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+		(Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same(a, b)),
+		(Value::Object(x), Value::Object(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same(v, w))),
+		_ => a == b,
+	}
+}
+
+/// `{ ...a, ...b }`: keys of b win, new keys go to the end.
+pub fn assign(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+	for (key, value) in source {
+		target.insert(key.clone(), value.clone());
+	}
+}
+
+/// `value ?? {}` as an object.
+pub fn object(v: Opt) -> Map<String, Value> {
+	match v {
+		Some(Value::Object(map)) => map.clone(),
+		_ => Map::new(),
+	}
+}
+
+/// JSON object from pairs, for building requests.
+#[macro_export]
+macro_rules! obj {
+	($($key:expr => $value:expr),* $(,)?) => {{
+		#[allow(unused_mut)]
+		let mut map = serde_json::Map::new();
+		$(map.insert(String::from($key), serde_json::Value::from($value));)*
+		serde_json::Value::Object(map)
+	}};
+}
+
+/// Seconds since 1970 as an ISO time like `new Date().toISOString()`: 2026-10-19T14:15:16.123Z.
+pub fn iso_time(millis: i64) -> String {
+	let days = millis.div_euclid(86_400_000);
+	let rest = millis.rem_euclid(86_400_000);
+	// Civil date from days, after Howard Hinnant's algorithm.
+	let z = days + 719_468;
+	let era = z.div_euclid(146_097);
+	let doe = z - era * 146_097;
+	let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+	let y = yoe + era * 400;
+	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	let mp = (5 * doy + 2) / 153;
+	let d = doy - (153 * mp + 2) / 5 + 1;
+	let m = if mp < 10 { mp + 3 } else { mp - 9 };
+	let y = if m <= 2 { y + 1 } else { y };
+	format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z", rest / 3_600_000, rest / 60_000 % 60, rest / 1000 % 60, rest % 1000)
+}
+
+/// Date.now().
+pub fn now() -> i64 {
+	std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use serde_json::json;
+
+	#[test]
+	fn numbers_print_like_javascript() {
+		for (x, s) in [
+			(1.0, "1"),
+			(-0.0, "0"),
+			(0.1 + 0.2, "0.30000000000000004"),
+			(28.8, "28.8"),
+			(1e21, "1e+21"),
+			(123456789012345680000.0, "123456789012345680000"),
+			(1e-7, "1e-7"),
+			(0.000001, "0.000001"),
+			(-1.5e-9, "-1.5e-9"),
+			(f64::INFINITY, "Infinity"),
+			(2.5e25, "2.5e+25"),
+		] {
+			assert_eq!(fmt(x), s, "{x}");
+		}
+	}
+
+	#[test]
+	fn to_fixed_rounds_like_javascript() {
+		for (x, d, s) in [
+			(0.25, 1, "0.3"),
+			(2.5, 0, "3"),
+			(-2.5, 0, "-3"),
+			(1.005, 2, "1.00"),
+			(6.45, 1, "6.5"),
+			(6.35, 1, "6.3"),
+			(-0.04, 1, "-0.0"),
+			(-6.25, 1, "-6.3"),
+			(99.95, 1, "100.0"),
+			(0.0, 2, "0.00"),
+			(1234.5678, 0, "1235"),
+			(9.995, 2, "9.99"),
+		] {
+			assert_eq!(to_fixed(x, d), s, "{x} {d}");
+		}
+	}
+
+	#[test]
+	fn coercions() {
+		assert_eq!(number(Some(&json!(" 12 "))), 12.0);
+		assert_eq!(number(Some(&json!(""))), 0.0);
+		assert!(number(Some(&json!("inf"))).is_nan());
+		assert_eq!(number(Some(&json!("-Infinity"))), f64::NEG_INFINITY);
+		assert_eq!(number(Some(&json!("0x1f"))), 31.0);
+		assert_eq!(number(Some(&json!(null))), 0.0);
+		assert!(number(None).is_nan());
+		assert_eq!(number(Some(&json!(true))), 1.0);
+		assert_eq!(number(Some(&json!("5."))), 5.0);
+		assert!(number(Some(&json!("."))).is_nan());
+		assert!(!truthy(Some(&json!(0))));
+		assert!(truthy(Some(&json!("0"))));
+		assert_eq!(round(-2.5), -2.0);
+		assert_eq!(round(2.5), 3.0);
+		assert_eq!(round(0.49999999999999994), 0.0);
+		assert_eq!(stringify(&json!({"a": 3.0, "b": [1.5, null, "x\n"]})), r#"{"a":3,"b":[1.5,null,"x\n"]}"#);
+		assert_eq!(iso_time(0), "1970-01-01T00:00:00.000Z");
+		assert_eq!(iso_time(1_792_419_316_123), "2026-10-19T14:15:16.123Z");
+	}
+}
