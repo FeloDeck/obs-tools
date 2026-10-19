@@ -1,4 +1,4 @@
-// A small event emitter like the one in Node: listeners run right away, in the order they were added.
+// A small event emitter: listeners run right away, in the order they were added.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -27,7 +27,7 @@ impl<T: ?Sized> Emitter<T> {
 		self.listeners.borrow_mut().retain(|(i, _)| *i != id);
 	}
 
-	/// Like Node: the listeners at the time of the call all run, even if one removes another.
+	/// The listeners at the time of the call all run, even if one removes another.
 	pub fn emit(&self, value: &T) {
 		let listeners: Vec<Listener<T>> = self.listeners.borrow().iter().map(|(_, l)| l.clone()).collect();
 		for listener in listeners {

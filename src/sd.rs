@@ -45,21 +45,13 @@ impl Sd {
 		self.send(Value::Object(message));
 	}
 
-	pub fn set_title(&self, context: &str, title: &str, state: Option<u16>) {
-		let mut payload = crate::obj! { "title" => title, "target" => 0 };
-		if let Some(state) = state {
-			payload["state"] = state.into();
-		}
-		self.to_context("setTitle", context, Some(payload));
+	pub fn set_title(&self, context: &str, title: &str) {
+		self.to_context("setTitle", context, Some(crate::obj! { "title" => title, "target" => 0 }));
 	}
 
 	/// image: data URL, path inside the plugin, or "" to go back to the default image.
-	pub fn set_image(&self, context: &str, image: &str, state: Option<u16>) {
-		let mut payload = crate::obj! { "image" => image, "target" => 0 };
-		if let Some(state) = state {
-			payload["state"] = state.into();
-		}
-		self.to_context("setImage", context, Some(payload));
+	pub fn set_image(&self, context: &str, image: &str) {
+		self.to_context("setImage", context, Some(crate::obj! { "image" => image, "target" => 0 }));
 	}
 
 	pub fn set_state(&self, context: &str, state: u16) {

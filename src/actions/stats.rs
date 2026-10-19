@@ -3,7 +3,7 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, KeyRc, Kind, PressArgs, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::Res;
 use crate::i18n::{num, t, t_with};
 use crate::icons::colors;
@@ -61,11 +61,11 @@ struct CpuUsage;
 
 impl StatsKey for CpuUsage {
 	fn sub(k: &KeyRc) -> std::cell::RefMut<'_, StatsSubscription> {
-		std::cell::RefMut::map(k.x::<CpuState>(), |s| &mut s.sub)
+		std::cell::RefMut::map(k.own::<CpuState>(), |s| &mut s.sub)
 	}
 
 	fn on_stats(k: &KeyRc, stats: &Value) {
-		k.x::<CpuState>().stats = Some(stats.clone());
+		k.own::<CpuState>().stats = Some(stats.clone());
 		k.render();
 	}
 }
@@ -86,7 +86,7 @@ impl Behavior for CpuUsage {
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let Some(stats) = k.x::<CpuState>().stats.clone() else { return };
+		let Some(stats) = k.own::<CpuState>().stats.clone() else { return };
 		let cpu = js::number_or(stats.get("cpuUsage"), 0.0);
 		let warn_at = k.s_num("warnAt");
 		let warn = warn_at > 0.0 && cpu >= warn_at;
@@ -113,13 +113,9 @@ pub static CPU_USAGE: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.cpuusage",
 	name: "CpuUsage",
 	defaults: || defaults(json!({ "warnAt": 50, "showMemory": false })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &CpuUsage,
 	new_state: || Box::new(CpuState::default()),
+	..Kind::BASE
 };
 
 // ----- Dropped Frames Alarm: shows the frame count and flashes when it goes up. -----
@@ -175,7 +171,7 @@ struct DroppedState {
 struct DroppedFrames;
 
 fn dropped(k: &KeyRc) -> std::cell::RefMut<'_, DroppedState> {
-	k.x::<DroppedState>()
+	k.own::<DroppedState>()
 }
 
 impl StatsKey for DroppedFrames {
@@ -270,7 +266,7 @@ impl Behavior for DroppedFrames {
 	}
 
 	// Press: stop the alarm and count from here.
-	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
 		{
 			let mut s = dropped(k);
 			s.alert_until = 0.0;
@@ -285,13 +281,9 @@ pub static DROPPED_FRAMES: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.droppedframes",
 	name: "DroppedFrames",
 	defaults: || defaults(json!({ "frameType": "dropped", "threshold": 1, "alertColor": colors::RED, "alertSeconds": 10 })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &DroppedFrames,
 	new_state: || Box::new(DroppedState::default()),
+	..Kind::BASE
 };
 
 // ----- Stream Health: bitrate (or time), recent drops, and a green, yellow or red light. -----
@@ -327,7 +319,7 @@ struct HealthState {
 struct StreamHealth;
 
 fn health(k: &KeyRc) -> std::cell::RefMut<'_, HealthState> {
-	k.x::<HealthState>()
+	k.own::<HealthState>()
 }
 
 impl StatsKey for StreamHealth {
@@ -434,11 +426,7 @@ pub static STREAM_HEALTH: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.streamhealth",
 	name: "StreamHealth",
 	defaults: || defaults(json!({ "show": "bitrate", "warnDrops": 1, "badDrops": 5 })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &StreamHealth,
 	new_state: || Box::new(HealthState::default()),
+	..Kind::BASE
 };

@@ -22,15 +22,15 @@ use crate::js::{self, fmt, truthy};
 use crate::timers::{Timer, set_timeout};
 use crate::{Error, Res};
 
-const OP_HELLO: f64 = 0.0;
-const OP_IDENTIFY: u8 = 1;
-const OP_IDENTIFIED: f64 = 2.0;
-const OP_REIDENTIFY: u8 = 3;
-const OP_EVENT: f64 = 5.0;
-const OP_REQUEST: u8 = 6;
-const OP_REQUEST_RESPONSE: f64 = 7.0;
-const OP_REQUEST_BATCH: u8 = 8;
-const OP_REQUEST_BATCH_RESPONSE: f64 = 9.0;
+const OP_HELLO: u64 = 0;
+const OP_IDENTIFY: u64 = 1;
+const OP_IDENTIFIED: u64 = 2;
+const OP_REIDENTIFY: u64 = 3;
+const OP_EVENT: u64 = 5;
+const OP_REQUEST: u64 = 6;
+const OP_REQUEST_RESPONSE: u64 = 7;
+const OP_REQUEST_BATCH: u64 = 8;
+const OP_REQUEST_BATCH_RESPONSE: u64 = 9;
 
 /// Every non high-volume category (2047).
 pub const EVENTS_ALL: u32 = (1 << 11) - 1;
@@ -74,19 +74,48 @@ struct Attempt {
 	error: RefCell<String>,
 }
 
-/// Status values:
-///   idle        not started
-///   connecting  waiting for the socket or the handshake
-///   connected   identified, requests work
-///   offline     nothing listens on host:port (OBS closed or server off)
-///   auth        wrong or missing password
-///   error       anything else, see last_error
+/// How the connection to OBS is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+	/// Not started.
+	Idle,
+	/// Waiting for the socket or the handshake.
+	Connecting,
+	/// Identified, requests work.
+	Connected,
+	/// Nothing listens on host:port (OBS closed or server off).
+	Offline,
+	/// Wrong or missing password.
+	Auth,
+	/// Anything else, see last_error.
+	Error,
+}
+
+impl Status {
+	/// The name the settings pages know.
+	pub fn name(self) -> &'static str {
+		match self {
+			Status::Idle => "idle",
+			Status::Connecting => "connecting",
+			Status::Connected => "connected",
+			Status::Offline => "offline",
+			Status::Auth => "auth",
+			Status::Error => "error",
+		}
+	}
+
+	/// OBS cannot be reached, and it is not just starting.
+	pub fn is_failure(self) -> bool {
+		matches!(self, Status::Offline | Status::Auth | Status::Error)
+	}
+}
+
 pub struct ObsClient {
 	pub host: String,
 	pub port: f64,
 	pub password: String,
 	pub name: String,
-	status: RefCell<String>,
+	status: Cell<Status>,
 	last_error: RefCell<String>,
 	version: RefCell<Option<Map<String, Value>>>,
 	ws: RefCell<Option<Socket>>,
@@ -99,12 +128,12 @@ pub struct ObsClient {
 	subscriptions: Cell<u32>,
 	me: Weak<ObsClient>,
 	/// (status, error)
-	pub on_status: Emitter<(String, String)>,
+	pub on_status: Emitter<(Status, String)>,
 	pub on_connected: Emitter<()>,
 	pub on_disconnected: Emitter<()>,
 	/// (eventType, eventData)
 	pub on_event: Emitter<(String, Value)>,
-	// Listeners for one event type, called after the ones of on_event, like emit(eventType) in Node.
+	// Listeners for one event type, called after the ones of on_event.
 	on_typed: Emitter<(String, Value)>,
 }
 
@@ -115,7 +144,7 @@ impl ObsClient {
 			port: if js::truthy_num(port) { port } else { 4455.0 },
 			password: password.to_string(),
 			name: name.to_string(),
-			status: RefCell::new("idle".into()),
+			status: Cell::new(Status::Idle),
 			last_error: RefCell::new(String::new()),
 			version: RefCell::new(None),
 			ws: RefCell::new(None),
@@ -139,8 +168,8 @@ impl ObsClient {
 		self.me.upgrade()
 	}
 
-	pub fn status(&self) -> String {
-		self.status.borrow().clone()
+	pub fn status(&self) -> Status {
+		self.status.get()
 	}
 
 	pub fn last_error(&self) -> String {
@@ -153,7 +182,7 @@ impl ObsClient {
 	}
 
 	pub fn connected(&self) -> bool {
-		*self.status.borrow() == "connected"
+		self.status.get() == Status::Connected
 	}
 
 	/// Listens to one event type until `off_type` with the returned id.
@@ -203,7 +232,7 @@ impl ObsClient {
 		if was_connected {
 			self.on_disconnected.emit(&());
 		}
-		self.set_status("idle", "");
+		self.set_status(Status::Idle, "");
 	}
 
 	/// Reconnect now, for example after the user saved new settings.
@@ -240,12 +269,12 @@ impl ObsClient {
 		}
 	}
 
-	fn set_status(&self, status: &str, error: &str) {
-		let changed = *self.status.borrow() != status || *self.last_error.borrow() != error;
-		*self.status.borrow_mut() = status.to_string();
+	fn set_status(&self, status: Status, error: &str) {
+		let changed = self.status.get() != status || *self.last_error.borrow() != error;
+		self.status.set(status);
 		*self.last_error.borrow_mut() = error.to_string();
 		if changed {
-			self.on_status.emit(&(status.to_string(), error.to_string()));
+			self.on_status.emit(&(status, error.to_string()));
 		}
 	}
 
@@ -258,8 +287,8 @@ impl ObsClient {
 			return;
 		}
 		// While retrying, keep showing why the last try failed.
-		if !matches!(self.status.borrow().as_str(), "offline" | "auth" | "error") {
-			self.set_status("connecting", "");
+		if !self.status.get().is_failure() {
+			self.set_status(Status::Connecting, "");
 		}
 		// The WebSocket error does not say why it failed, so check the name first.
 		let bare = self.host.strip_prefix('[').unwrap_or(&self.host);
@@ -272,7 +301,7 @@ impl ObsClient {
 					if me.stopped.get() {
 						return;
 					}
-					me.set_status("offline", &format!("Host {} not found", me.host));
+					me.set_status(Status::Offline, &format!("Host {} not found", me.host));
 					me.schedule_retry();
 					return;
 				}
@@ -291,7 +320,7 @@ impl ObsClient {
 		let mut request = match self.url().into_client_request() {
 			Ok(request) => request,
 			Err(error) => {
-				self.set_status("error", &error.to_string());
+				self.set_status(Status::Error, &error.to_string());
 				self.schedule_retry();
 				return;
 			}
@@ -307,84 +336,93 @@ impl ObsClient {
 
 	fn on_message(&self, serial: u64, attempt: &Attempt, text: &str) {
 		let Ok(message) = serde_json::from_str::<Value>(text) else { return };
-		let op = js::number(message.get("op"));
 		let d = message.get("d").cloned().unwrap_or(Value::Null);
-		if op == OP_HELLO {
-			let mut identify = Map::new();
-			identify.insert("rpcVersion".into(), 1.into());
-			identify.insert("eventSubscriptions".into(), self.subscriptions.get().into());
-			let auth = d.get("authentication");
-			if truthy(auth) {
-				if self.password.is_empty() {
-					attempt.close_code.set(CLOSE_AUTH_FAILED);
-					*attempt.error.borrow_mut() = "OBS asks for a password".into();
-					self.send_message(Message::Close(Some(CloseFrame { code: CloseCode::Normal, reason: "".into() })));
-					return;
-				}
-				let salt = js::to_string(auth.and_then(|a| a.get("salt")));
-				let challenge = js::to_string(auth.and_then(|a| a.get("challenge")));
-				identify.insert("authentication".into(), auth_response(&self.password, &salt, &challenge).into());
-			}
-			let mut version = Map::new();
-			version.insert("obs".into(), Value::Null);
-			for (key, from) in [("websocket", "obsWebSocketVersion"), ("rpc", "rpcVersion")] {
-				if let Some(value) = d.get(from) {
-					version.insert(key.into(), value.clone());
-				}
-			}
-			*self.version.borrow_mut() = Some(version);
-			self.send_raw(&crate::obj! { "op" => OP_IDENTIFY, "d" => Value::Object(identify) });
-		} else if op == OP_IDENTIFIED {
-			// The answer to a Reidentify.
-			if attempt.identified.get() {
-				return;
-			}
-			attempt.identified.set(true);
-			self.retry.set(0);
-			let Some(me) = self.rc() else { return };
-			let reply = self.call("GetVersion", crate::obj! {});
-			spawn_local(async move {
-				if let Ok(version) = reply.await {
-					let mut current = me.version.borrow().clone().unwrap_or_default();
-					current.insert("obs".into(), version.get("obsVersion").cloned().unwrap_or(Value::Null));
-					if let Some(platform) = version.get("platformDescription") {
-						current.insert("platform".into(), platform.clone());
-					}
-					*me.version.borrow_mut() = Some(current);
-				}
-				if !me.is_current(serial) {
-					return;
-				}
-				me.set_status("connected", "");
-				me.on_connected.emit(&());
-			});
-		} else if op == OP_EVENT {
-			let kind = js::to_string(d.get("eventType"));
-			let data = match d.get("eventData") {
-				None | Some(Value::Null) => Value::Object(Map::new()),
-				Some(data) => data.clone(),
-			};
-			let event = (kind, data);
-			self.on_event.emit(&event);
-			self.on_typed.emit(&event);
-		} else if op == OP_REQUEST_RESPONSE || op == OP_REQUEST_BATCH_RESPONSE {
-			let id = js::to_string(d.get("requestId"));
-			let Some(pending) = self.pending.borrow_mut().remove(&id) else { return };
-			let result = if op == OP_REQUEST_BATCH_RESPONSE {
-				Ok(match d.get("results") {
-					None | Some(Value::Null) => Value::Array(Vec::new()),
-					Some(results) => results.clone(),
-				})
-			} else if truthy(d.get("requestStatus").and_then(|s| s.get("result"))) {
-				Ok(match d.get("responseData") {
+		match message.get("op").and_then(Value::as_u64) {
+			Some(OP_HELLO) => self.on_hello(attempt, &d),
+			Some(OP_IDENTIFIED) => self.on_identified(serial, attempt),
+			Some(OP_EVENT) => {
+				let kind = js::to_string(d.get("eventType"));
+				let data = match d.get("eventData") {
 					None | Some(Value::Null) => Value::Object(Map::new()),
 					Some(data) => data.clone(),
-				})
-			} else {
-				Err(obs_error(d.get("requestType"), d.get("requestStatus")))
-			};
-			let _ = pending.send(result);
+				};
+				let event = (kind, data);
+				self.on_event.emit(&event);
+				self.on_typed.emit(&event);
+			}
+			Some(op @ (OP_REQUEST_RESPONSE | OP_REQUEST_BATCH_RESPONSE)) => {
+				let id = js::to_string(d.get("requestId"));
+				let Some(pending) = self.pending.borrow_mut().remove(&id) else { return };
+				let result = if op == OP_REQUEST_BATCH_RESPONSE {
+					Ok(match d.get("results") {
+						None | Some(Value::Null) => Value::Array(Vec::new()),
+						Some(results) => results.clone(),
+					})
+				} else if truthy(d.get("requestStatus").and_then(|s| s.get("result"))) {
+					Ok(match d.get("responseData") {
+						None | Some(Value::Null) => Value::Object(Map::new()),
+						Some(data) => data.clone(),
+					})
+				} else {
+					Err(obs_error(d.get("requestType"), d.get("requestStatus")))
+				};
+				let _ = pending.send(result);
+			}
+			_ => {}
 		}
+	}
+
+	fn on_hello(&self, attempt: &Attempt, d: &Value) {
+		let mut identify = Map::new();
+		identify.insert("rpcVersion".into(), 1.into());
+		identify.insert("eventSubscriptions".into(), self.subscriptions.get().into());
+		let auth = d.get("authentication");
+		if truthy(auth) {
+			if self.password.is_empty() {
+				attempt.close_code.set(CLOSE_AUTH_FAILED);
+				*attempt.error.borrow_mut() = "OBS asks for a password".into();
+				self.send_message(Message::Close(Some(CloseFrame { code: CloseCode::Normal, reason: "".into() })));
+				return;
+			}
+			let salt = js::to_string(auth.and_then(|a| a.get("salt")));
+			let challenge = js::to_string(auth.and_then(|a| a.get("challenge")));
+			identify.insert("authentication".into(), auth_response(&self.password, &salt, &challenge).into());
+		}
+		let mut version = Map::new();
+		version.insert("obs".into(), Value::Null);
+		for (key, from) in [("websocket", "obsWebSocketVersion"), ("rpc", "rpcVersion")] {
+			if let Some(value) = d.get(from) {
+				version.insert(key.into(), value.clone());
+			}
+		}
+		*self.version.borrow_mut() = Some(version);
+		self.send_raw(&crate::obj! { "op" => OP_IDENTIFY, "d" => Value::Object(identify) });
+	}
+
+	fn on_identified(&self, serial: u64, attempt: &Attempt) {
+		// Identified already: this is the answer to a Reidentify.
+		if attempt.identified.get() {
+			return;
+		}
+		attempt.identified.set(true);
+		self.retry.set(0);
+		let Some(me) = self.rc() else { return };
+		let reply = self.call("GetVersion", crate::obj! {});
+		spawn_local(async move {
+			if let Ok(version) = reply.await {
+				let mut current = me.version.borrow().clone().unwrap_or_default();
+				current.insert("obs".into(), version.get("obsVersion").cloned().unwrap_or(Value::Null));
+				if let Some(platform) = version.get("platformDescription") {
+					current.insert("platform".into(), platform.clone());
+				}
+				*me.version.borrow_mut() = Some(current);
+			}
+			if !me.is_current(serial) {
+				return;
+			}
+			me.set_status(Status::Connected, "");
+			me.on_connected.emit(&());
+		});
 	}
 
 	fn closed(&self, serial: u64, attempt: &Attempt, event_code: u16, reason: &str) {
@@ -400,14 +438,14 @@ impl ObsClient {
 		}
 		let error = attempt.error.borrow().clone();
 		if code == CLOSE_AUTH_FAILED {
-			self.set_status("auth", if error.is_empty() { "Wrong password" } else { &error });
+			self.set_status(Status::Auth, if error.is_empty() { "Wrong password" } else { &error });
 		} else if code == CLOSE_RPC_VERSION {
-			self.set_status("error", "This OBS version is not supported (needs obs-websocket 5)");
+			self.set_status(Status::Error, "This OBS version is not supported (needs obs-websocket 5)");
 		} else if !was_connected {
 			let nothing = format!("Nothing answers on {}:{}", self.host, fmt(self.port));
-			self.set_status("offline", if error.is_empty() { &nothing } else { &error });
+			self.set_status(Status::Offline, if error.is_empty() { &nothing } else { &error });
 		} else {
-			self.set_status("offline", if reason.is_empty() { "OBS closed the connection" } else { reason });
+			self.set_status(Status::Offline, if reason.is_empty() { "OBS closed the connection" } else { reason });
 		}
 		self.schedule_retry();
 	}
@@ -418,7 +456,7 @@ impl ObsClient {
 		}
 		self.clear_retry();
 		let delay =
-			if *self.status.borrow() == "auth" { AUTH_RETRY_DELAY } else { RETRY_DELAYS[self.retry.get().min(RETRY_DELAYS.len() - 1)] };
+			if self.status.get() == Status::Auth { AUTH_RETRY_DELAY } else { RETRY_DELAYS[self.retry.get().min(RETRY_DELAYS.len() - 1)] };
 		self.retry.set(self.retry.get() + 1);
 		let me = self.me.clone();
 		let timer = set_timeout(delay, move || {
@@ -447,7 +485,7 @@ impl ObsClient {
 		self.send_message(Message::Text(js::stringify(message).into()))
 	}
 
-	fn send(&self, op: u8, mut d: Map<String, Value>, timeout: f64) -> Reply {
+	fn send(&self, op: u64, mut d: Map<String, Value>, timeout: f64) -> Reply {
 		let open = self.ws.borrow().as_ref().is_some_and(|s| s.open.get());
 		if !open {
 			return Box::pin(async { Err(Error::from("OBS not connected")) });
@@ -458,7 +496,7 @@ impl ObsClient {
 		self.pending.borrow_mut().insert(id.clone(), tx);
 		d.insert("requestId".into(), id.clone().into());
 		self.send_raw(&crate::obj! { "op" => op, "d" => Value::Object(d) });
-		// The time starts now, like the setTimeout of the JavaScript version.
+		// The time starts now, not when the reply is first awaited.
 		let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(timeout.max(0.0) / 1000.0);
 		let me = self.me.clone();
 		Box::pin(async move {

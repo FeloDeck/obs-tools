@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, KeyRc, Kind, PressArgs, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::Res;
 use crate::icons::colors;
 use crate::js::{self, truthy};
+use crate::obs_state::Change;
 use crate::render::{GlyphKey, SceneKey, glyph_key, is_color, scene_key};
 
 // ----- Smart Scene: press once to put the scene in preview (studio mode), press again to go live. -----
@@ -18,7 +19,7 @@ struct SceneState {
 struct SmartScene;
 
 fn scene(k: &KeyRc) -> std::cell::RefMut<'_, SceneState> {
-	k.x::<SceneState>()
+	k.own::<SceneState>()
 }
 
 fn stop_preview(k: &KeyRc) {
@@ -100,9 +101,9 @@ impl Behavior for SmartScene {
 		Ok(())
 	}
 
-	async fn on_state_change(&self, k: &KeyRc, what: &str) -> Res<()> {
+	async fn on_state_change(&self, k: &KeyRc, change: Change) -> Res<()> {
 		self.render(k);
-		if what == "program" || what == "preview" {
+		if matches!(change, Change::Program | Change::Preview) {
 			let k = k.clone();
 			tokio::task::spawn_local(async move { refresh_shot(&k).await });
 		}
@@ -131,13 +132,13 @@ impl Behavior for SmartScene {
 		k.set_image(&scene_key(&SceneKey { image: shot.as_deref(), border, fit: &fit, title: &title, ..Default::default() }));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let name = k.s_val("scene");
 		if !truthy(Some(&name)) {
 			return Err("no scene selected".into());
 		}
 		let data = k.data();
-		let op = k.op(&args);
+		let op = press.op;
 		if op == "preview" {
 			if !data.studio_mode {
 				return Err("studio mode is off".into());
@@ -177,11 +178,10 @@ pub static SMART_SCENE: Kind = Kind {
 	},
 	press_key: "press",
 	ops: &["switch", "live", "preview"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["scene"],
 	behavior: &SmartScene,
 	new_state: || Box::new(SceneState::default()),
+	..Kind::BASE
 };
 
 // ----- Studio Mode -----
@@ -194,9 +194,9 @@ impl Behavior for StudioMode {
 		k.set_state(if k.data().studio_mode { 1 } else { 0 });
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let current = k.data().studio_mode;
-		let mode = k.op(&args);
+		let mode = press.op;
 		// take: the transition button of OBS, the preview goes live.
 		if mode == "take" {
 			if !current {
@@ -221,11 +221,8 @@ pub static STUDIO_MODE: Kind = Kind {
 	defaults: || defaults(json!({ "mode": "toggle", "hold": "none", "double": "none" })),
 	press_key: "mode",
 	ops: &["toggle", "enable", "disable", "take"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &StudioMode,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 // ----- Last Scene: back to the scene that was live before the current one. -----
@@ -239,7 +236,7 @@ impl Behavior for PreviousScene {
 		k.glyph_for_title(if k.s_truthy("showName") { &previous } else { "" });
 	}
 
-	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
 		let Some(previous) = k.data().previous_scene() else { return Err("no previous scene yet".into()) };
 		k.call("SetCurrentProgramScene", json!({ "sceneName": previous })).await?;
 		Ok(())
@@ -250,13 +247,8 @@ pub static PREVIOUS_SCENE: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.previousscene",
 	name: "PreviousScene",
 	defaults: || defaults(json!({ "showName": true })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &PreviousScene,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 // ----- Next Scene -----
@@ -302,11 +294,11 @@ impl Behavior for NextScene {
 		k.set_image(&glyph_key(next_glyph(k), &GlyphKey { title: &title, ..Default::default() }));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		// Ask OBS, the cached scene can lag behind a fast double press.
 		let current = k.call("GetCurrentProgramScene", json!({})).await?;
 		let program = current.get("sceneName").and_then(Value::as_str).map(String::from);
-		let Some(target) = next_target(k, program.as_deref(), &k.op(&args)) else { return Err("no next scene".into()) };
+		let Some(target) = next_target(k, program.as_deref(), &press.op) else { return Err("no next scene".into()) };
 		k.call("SetCurrentProgramScene", json!({ "sceneName": target })).await?;
 		Ok(())
 	}
@@ -318,11 +310,8 @@ pub static NEXT_SCENE: Kind = Kind {
 	defaults: || defaults(json!({ "direction": "next", "hold": "none", "double": "none", "wrap": true, "showName": true })),
 	press_key: "direction",
 	ops: &["next", "previous"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &NextScene,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 // ----- Set Transition -----
@@ -357,7 +346,7 @@ impl Behavior for SetTransition {
 		transition_title(k);
 	}
 
-	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
 		let transition = k.s_val("transition");
 		if !truthy(Some(&transition)) {
 			return Err("no transition selected".into());
@@ -382,11 +371,7 @@ pub static SET_TRANSITION: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.settransition",
 	name: "SetTransition",
 	defaults: || defaults(json!({ "transition": "", "duration": "", "showName": true })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
 	required: &["transition"],
 	behavior: &SetTransition,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };

@@ -11,7 +11,7 @@ pub fn setup() -> Result {
 	local(async {
 		let obs = Obs::connect().await?;
 		let home = std::env::var("HOME").unwrap_or_default();
-		// Like the JavaScript version: a step that fails (because it is there already) is skipped.
+		// A step that fails (because it is there already) is skipped.
 		let call = async |kind: &str, data: Value| match obs.call(kind, data).await {
 			Ok(value) => Some(value),
 			Err(error) => {

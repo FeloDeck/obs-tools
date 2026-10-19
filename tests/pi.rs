@@ -6,7 +6,8 @@ use std::rc::Rc;
 use boa_engine::builtins::promise::PromiseState;
 use boa_engine::module::SimpleModuleLoader;
 use boa_engine::{Context, Module, Source, js_string};
-use obs_tools::{i18n, icons, js, pi, render, text_gestures, volume};
+use obs_tools::actions::text::text_uses;
+use obs_tools::{i18n, icons, js, pi, render, volume};
 use regex::Regex;
 use serde_json::{Value, json};
 
@@ -56,9 +57,13 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 	}
 }
 
-// The code of a file without its tests.
+// The code of a file without its test module (a #[cfg(test)] field does not end the code).
 fn without_tests(code: &str) -> &str {
-	match code.find("#[cfg(test)]") {
+	let module = code.match_indices("#[cfg(test)]\n").map(|(i, _)| i).find(|&i| {
+		let next = &code[i + "#[cfg(test)]\n".len()..];
+		next.starts_with("mod ") || next.starts_with("pub(crate) mod ")
+	});
+	match module {
 		Some(i) => &code[..i],
 		None => code,
 	}
@@ -139,8 +144,8 @@ fn every_text_has_a_german_translation() {
 		let code = std::fs::read_to_string(file).expect("source");
 		let code = without_tests(&code);
 		texts.extend(t_call.captures_iter(code).map(|c| unescape(&c[1])));
-		// Errors and statuses reach the settings page, which translates them. Like in the JavaScript
-		// version, messages are the texts with a space, any {value} can be any value.
+		// Errors and statuses reach the settings page, which translates them. Messages are the texts
+		// with a space, any {value} can be any value.
 		for start in ["Err(", "Error::from(", "set_status("] {
 			for (at, _) in code.match_indices(start) {
 				let open = at + start.len() - 1;
@@ -303,6 +308,6 @@ fn settings_page_texts_match_the_plugin() {
 	}
 	i18n::set_language("en");
 	let settings = js::object(Some(&json!({ "press": "up", "hold": "next" })));
-	expected.push(json!(["text", "line", "count", "timer"].map(|k| text_gestures::text_uses(&settings, k))));
+	expected.push(json!(["text", "line", "count", "timer"].map(|k| text_uses(&settings, k))));
 	assert_eq!(result, Value::Array(expected));
 }

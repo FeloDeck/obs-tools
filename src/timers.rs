@@ -1,5 +1,5 @@
-// setTimeout and setInterval. A callback runs as its own task, so clearing a timer never stops a
-// callback that already started, like in JavaScript.
+// Timers that call back once or again and again. A callback runs as its own task, so clearing a
+// timer never stops a callback that already started.
 use std::time::Duration;
 
 use tokio::task::{AbortHandle, spawn_local};
@@ -14,7 +14,7 @@ impl Timer {
 }
 
 fn duration(ms: f64) -> Duration {
-	// Like Node: at least 1 ms.
+	// At least 1 ms.
 	Duration::from_secs_f64(if ms.is_finite() && ms >= 1.0 { ms } else { 1.0 } / 1000.0)
 }
 
@@ -39,7 +39,7 @@ pub fn set_interval(ms: f64, callback: impl Fn() + 'static) -> Timer {
 	Timer(handle.abort_handle())
 }
 
-/// await new Promise((r) => setTimeout(r, ms))
+/// Waits for ms milliseconds.
 pub async fn sleep(ms: f64) {
 	tokio::time::sleep(duration(ms)).await;
 }

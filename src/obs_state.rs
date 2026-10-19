@@ -34,6 +34,23 @@ pub struct Level {
 	pub magnitude: f64,
 }
 
+/// What changed in the OBS state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+	/// Everything: loaded again, or the connection is gone.
+	All,
+	Program,
+	Preview,
+	Studio,
+	Scenes,
+	Record,
+	Stream,
+	Replay,
+	Virtualcam,
+	Transition,
+	Profile,
+}
+
 #[derive(Clone, Debug)]
 pub struct Data {
 	pub ready: bool,
@@ -90,8 +107,7 @@ pub struct ObsState {
 	meter_users: Cell<i64>,
 	levels: RefCell<HashMap<String, Level>>,
 	me: Weak<ObsState>,
-	/// What changed: "all", "program", "preview", "studio", "scenes", "record", ...
-	pub on_change: Emitter<str>,
+	pub on_change: Emitter<Change>,
 	pub on_meters: Emitter<HashMap<String, Level>>,
 	pub on_stats: Emitter<Value>,
 }
@@ -140,7 +156,7 @@ impl ObsState {
 			move |_| {
 				if let Some(me) = me.upgrade() {
 					me.reset();
-					me.on_change.emit("all");
+					me.on_change.emit(&Change::All);
 				}
 			}
 		});
@@ -232,17 +248,17 @@ impl ObsState {
 			}
 			d.ready = true;
 		}
-		self.on_change.emit("all");
+		self.on_change.emit(&Change::All);
 	}
 
 	fn spawn_refresh_scenes(&self) {
 		if let Some(me) = self.me.upgrade() {
-			// call() sends right away, like in the JavaScript version.
+			// call() sends right away, not when the task runs.
 			let reply = me.client.call("GetSceneList", crate::obj! {});
 			spawn_local(async move {
 				if let Ok(list) = reply.await {
 					set_scenes(&mut me.data.borrow_mut(), &list);
-					me.on_change.emit("scenes");
+					me.on_change.emit(&Change::Scenes);
 				}
 			});
 		}
@@ -266,11 +282,11 @@ impl ObsState {
 					}
 					d.program_scene = new;
 				}
-				self.on_change.emit("program");
+				self.on_change.emit(&Change::Program);
 			}
 			"CurrentPreviewSceneChanged" => {
 				self.data.borrow_mut().preview_scene = s("sceneName");
-				self.on_change.emit("preview");
+				self.on_change.emit(&Change::Preview);
 			}
 			"StudioModeStateChanged" => {
 				let enabled = truthy(data.get("studioModeEnabled"));
@@ -283,11 +299,11 @@ impl ObsState {
 						if let Ok(r) = reply.await {
 							me.data.borrow_mut().preview_scene =
 								string(r.get("sceneName")).or_else(|| string(r.get("currentPreviewSceneName")));
-							me.on_change.emit("preview");
+							me.on_change.emit(&Change::Preview);
 						}
 					});
 				}
-				self.on_change.emit("studio");
+				self.on_change.emit(&Change::Studio);
 			}
 			"SceneListChanged" | "SceneCreated" | "SceneRemoved" => self.spawn_refresh_scenes(),
 			"SceneNameChanged" => {
@@ -315,19 +331,19 @@ impl ObsState {
 					paused: data.get("outputState").and_then(Value::as_str) == Some("OBS_WEBSOCKET_OUTPUT_PAUSED"),
 					available: false,
 				};
-				self.on_change.emit("record");
+				self.on_change.emit(&Change::Record);
 			}
 			"StreamStateChanged" => {
 				self.data.borrow_mut().stream = Output { active: truthy(data.get("outputActive")), ..Output::default() };
-				self.on_change.emit("stream");
+				self.on_change.emit(&Change::Stream);
 			}
 			"ReplayBufferStateChanged" => {
 				self.data.borrow_mut().replay = Output { active: truthy(data.get("outputActive")), available: true, ..Output::default() };
-				self.on_change.emit("replay");
+				self.on_change.emit(&Change::Replay);
 			}
 			"VirtualcamStateChanged" => {
 				self.data.borrow_mut().virtualcam = Output { active: truthy(data.get("outputActive")), ..Output::default() };
-				self.on_change.emit("virtualcam");
+				self.on_change.emit(&Change::Virtualcam);
 			}
 			"CurrentSceneTransitionChanged" => {
 				self.data.borrow_mut().transition.name = s("transitionName");
@@ -337,19 +353,19 @@ impl ObsState {
 						if let Ok(r) = reply.await {
 							me.data.borrow_mut().transition =
 								Transition { name: string(r.get("transitionName")), duration: number(r.get("transitionDuration")) };
-							me.on_change.emit("transition");
+							me.on_change.emit(&Change::Transition);
 						}
 					});
 				}
-				self.on_change.emit("transition");
+				self.on_change.emit(&Change::Transition);
 			}
 			"CurrentSceneTransitionDurationChanged" => {
 				self.data.borrow_mut().transition.duration = number(data.get("transitionDuration"));
-				self.on_change.emit("transition");
+				self.on_change.emit(&Change::Transition);
 			}
 			"CurrentProfileChanged" => {
 				self.data.borrow_mut().profile = s("profileName");
-				self.on_change.emit("profile");
+				self.on_change.emit(&Change::Profile);
 			}
 			"CurrentSceneCollectionChanged" => {
 				// Everything about scenes changed, start over.
@@ -496,7 +512,7 @@ pub fn sorted_scene_names(list: &Value) -> Vec<String> {
 		Some(Value::Array(scenes)) => scenes.iter().collect(),
 		_ => Vec::new(),
 	};
-	// Stable sort by sceneIndex, highest first, like the JavaScript sort.
+	// Stable sort by sceneIndex, highest first.
 	scenes.sort_by(|a, b| {
 		let (a, b) = (js::number(a.get("sceneIndex")), js::number(b.get("sceneIndex")));
 		b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)

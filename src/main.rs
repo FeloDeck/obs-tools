@@ -1,12 +1,13 @@
 // Entry point. OpenDeck starts this with the usual Stream Deck arguments.
 //
 // openaction talks to OpenDeck. Its handlers only pass the events on to the plugin, which runs on
-// this one thread like the JavaScript version did: every event becomes a task of its own.
+// this one thread: every event becomes a task of its own.
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering::Relaxed;
 
+use obs_tools::actions::Controller;
 use obs_tools::i18n;
-use obs_tools::plugin::{Event, Plugin, dispatch};
+use obs_tools::plugin::{Event, EventKind, Plugin, dispatch};
 use obs_tools::sd::{Sd, log};
 use openaction::global_events::{DidReceiveGlobalSettingsEvent, GlobalEventHandler, SystemDidWakeUpEvent, set_global_event_handler};
 use openaction::{Action, Instance, OpenActionResult, async_trait, register_action};
@@ -31,22 +32,16 @@ fn send(message: Inbound) {
 	}
 }
 
-fn event(name: &str, instance: &Instance, settings: Option<&Value>) -> Event {
-	Event {
-		event: name.to_string(),
+fn forward(kind: EventKind, instance: &Instance, settings: Option<&Value>) -> OpenActionResult<()> {
+	send(Inbound::Event(Box::new(Event {
+		kind,
 		action: instance.action_uuid.clone(),
 		context: instance.instance_id.clone(),
-		device: instance.device_id.clone(),
-		controller: Some(instance.controller.clone()),
+		controller: Some(Controller::from_name(&instance.controller)),
 		is_in_multi_action: instance.is_in_multi_action,
 		state: Some(instance.current_state_index.load(Relaxed)),
 		settings: settings.cloned(),
-		..Event::default()
-	}
-}
-
-fn forward(name: &str, instance: &Instance, settings: &Value) -> OpenActionResult<()> {
-	send(Inbound::Event(Box::new(event(name, instance, Some(settings)))));
+	})));
 	Ok(())
 }
 
@@ -62,55 +57,51 @@ macro_rules! actions {
 				type Settings = Value;
 
 				async fn will_appear(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("willAppear", i, s)
+					forward(EventKind::WillAppear, i, Some(s))
 				}
 
 				async fn will_disappear(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("willDisappear", i, s)
+					forward(EventKind::WillDisappear, i, Some(s))
 				}
 
 				async fn key_down(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("keyDown", i, s)
+					forward(EventKind::KeyDown, i, Some(s))
 				}
 
 				async fn key_up(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("keyUp", i, s)
+					forward(EventKind::KeyUp, i, Some(s))
 				}
 
 				async fn dial_rotate(&self, i: &Instance, s: &Value, ticks: i16, pressed: bool) -> OpenActionResult<()> {
-					send(Inbound::Event(Box::new(Event { ticks: f64::from(ticks), pressed, ..event("dialRotate", i, Some(s)) })));
-					Ok(())
+					forward(EventKind::DialRotate { ticks: f64::from(ticks), pressed }, i, Some(s))
 				}
 
 				async fn dial_down(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("dialDown", i, s)
+					forward(EventKind::DialDown, i, Some(s))
 				}
 
 				async fn dial_up(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("dialUp", i, s)
+					forward(EventKind::DialUp, i, Some(s))
 				}
 
 				async fn touch_tap(&self, i: &Instance, s: &Value, _position: (u16, u16), _hold: bool) -> OpenActionResult<()> {
-					forward("touchTap", i, s)
+					forward(EventKind::TouchTap, i, Some(s))
 				}
 
 				async fn did_receive_settings(&self, i: &Instance, s: &Value) -> OpenActionResult<()> {
-					forward("didReceiveSettings", i, s)
+					forward(EventKind::DidReceiveSettings, i, Some(s))
 				}
 
 				async fn property_inspector_did_appear(&self, i: &Instance, _s: &Value) -> OpenActionResult<()> {
-					send(Inbound::Event(Box::new(event("propertyInspectorDidAppear", i, None))));
-					Ok(())
+					forward(EventKind::InspectorDidAppear, i, None)
 				}
 
 				async fn property_inspector_did_disappear(&self, i: &Instance, _s: &Value) -> OpenActionResult<()> {
-					send(Inbound::Event(Box::new(event("propertyInspectorDidDisappear", i, None))));
-					Ok(())
+					forward(EventKind::InspectorDidDisappear, i, None)
 				}
 
 				async fn send_to_plugin(&self, i: &Instance, _s: &Value, payload: &Value) -> OpenActionResult<()> {
-					send(Inbound::Event(Box::new(Event { payload: payload.clone(), ..event("sendToPlugin", i, None) })));
-					Ok(())
+					forward(EventKind::SendToPlugin(payload.clone()), i, None)
 				}
 			}
 		)*

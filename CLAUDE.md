@@ -49,7 +49,7 @@
   checkboxes: OpenDeck's WebKitGTK draws those in the GTK style.
 - An action that can do more than one thing lists it in `ops` of its `Kind` (the press choice is in
   the setting `press_key`), and its schema uses `gestures()`. Press, hold and double press then
-  offer the same choices, and the base (`src/actions/mod.rs`) does the key handling.
+  offer the same choices, and `src/actions/key/` does the key handling.
 - Settings a key cannot work without go in `required`, so the key shows the setup image (gray
   glyph, yellow dot) until they are set. Errors an action returns show up on its settings page:
   write them as short English sentences and add the German text.

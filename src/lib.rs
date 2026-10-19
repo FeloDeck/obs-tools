@@ -1,5 +1,5 @@
-// OBS Tools for OpenDeck. The plugin runs on one thread, like the JavaScript version did: every
-// event from OpenDeck or OBS starts a task, and tasks take turns at each await.
+// OBS Tools for OpenDeck. The plugin runs on one thread: every event from OpenDeck or OBS starts a
+// task, and tasks take turns at each await.
 pub mod actions;
 pub mod animation;
 pub mod connections;
@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod icons;
 pub mod js;
 pub mod key_images;
+pub mod lists;
 pub mod manifest;
 pub mod media;
 pub mod obs;
@@ -18,7 +19,6 @@ pub mod pi;
 pub mod plugin;
 pub mod render;
 pub mod sd;
-pub mod text_gestures;
 pub mod time;
 pub mod timers;
 pub mod twitch;

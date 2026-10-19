@@ -104,8 +104,8 @@ fn parts(text: &str) -> Vec<Part> {
 	parts
 }
 
-// Like the regular expression ^text(.+?)text$ of the JavaScript version: a hole takes at least one
-// character but no line break, the shortest that lets the rest match.
+// Like the regular expression ^text(.+?)text$ of translateMessage() in pi/lib/i18n.js: a hole takes
+// at least one character but no line break, the shortest that lets the rest match.
 fn match_parts<'a>(parts: &[Part], message: &'a str, found: &mut Vec<&'a str>) -> bool {
 	match parts.split_first() {
 		None => message.is_empty(),

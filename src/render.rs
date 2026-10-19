@@ -6,6 +6,7 @@ use base64::Engine;
 use crate::i18n::t;
 use crate::icons::{GlyphOpts, colors, escape_xml, glyph, glyph_height};
 use crate::js::{fmt, max, min, round};
+use crate::obs::Status;
 
 pub const SIZE: f64 = 144.0;
 const FONT: &str = "'Inter','Noto Sans','DejaVu Sans','Liberation Sans',sans-serif";
@@ -66,7 +67,7 @@ fn text(value: &str, o: Text) -> String {
 	)
 }
 
-/// Length as JavaScript counts it, in UTF-16 units.
+/// Length as pi/lib/render.js counts it, in UTF-16 units.
 fn js_len(text: &str) -> usize {
 	text.encode_utf16().count()
 }
@@ -143,7 +144,7 @@ pub fn title_line(value: &str, width: f64) -> TitleLine {
 	let size = max(15.0, min(22.0, (width / (max(1.0, js_len(&line) as f64) * per_char)).floor()));
 	let fits = (width / (size * per_char)).floor();
 	if js_len(&line) as f64 > fits {
-		// Cut like String.slice: by UTF-16 units. Half an emoji becomes U+FFFD, as in the JS version.
+		// Cut by UTF-16 units, like pi/lib/render.js. Half an emoji becomes U+FFFD there too.
 		let units: Vec<u16> = line.encode_utf16().take(max(1.0, fits - 1.0) as usize).collect();
 		let start = String::from_utf16_lossy(&units);
 		line = format!("{}…", start.trim_end_matches(crate::js::is_js_space));
@@ -341,17 +342,17 @@ pub fn scene_key(o: &SceneKey) -> String {
 }
 
 /// Why OBS cannot be reached, in a word or two. Keys show it with a glyph, dials as text.
-pub fn status_label(status: &str) -> String {
+pub fn status_label(status: Status) -> String {
 	t(match status {
-		"auth" => "Password?",
-		"error" => "OBS error",
+		Status::Auth => "Password?",
+		Status::Error => "OBS error",
 		_ => "OBS offline",
 	})
 }
 
 /// Shown on every key while OBS cannot be reached.
-pub fn status_key(status: &str) -> String {
-	let auth = status == "auth" || status == "error";
+pub fn status_key(status: Status) -> String {
+	let auth = matches!(status, Status::Auth | Status::Error);
 	let color = if auth { colors::AMBER } else { colors::GRAY };
 	let mut content = glyph(if auth { "lock" } else { "power" }, &GlyphOpts { x: 44.0, y: 22.0, size: 56.0, color, ..Default::default() });
 	let label = status_label(status);

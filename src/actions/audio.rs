@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use super::{Behavior, ID, KeyRc, Kind, PressArgs, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::Res;
 use crate::i18n::t;
 use crate::icons::{colors, volume_glyph};
@@ -35,7 +35,7 @@ fn new_state() -> Box<dyn std::any::Any> {
 }
 
 fn st(k: &KeyRc) -> std::cell::RefMut<'_, InputState> {
-	k.x::<InputState>()
+	k.own::<InputState>()
 }
 
 fn stop_meter(k: &KeyRc) {
@@ -246,9 +246,9 @@ impl Behavior for SourceVolume {
 		));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
-		let mode = k.op(&args);
-		let repeat = args.as_ref().is_some_and(|a| a.repeat);
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
+		let mode = press.op;
+		let repeat = press.repeat;
 		if mode == "mute" {
 			if !repeat {
 				toggle_mute(k).await?;
@@ -274,11 +274,11 @@ pub static SOURCE_VOLUME: Kind = Kind {
 	},
 	press_key: "mode",
 	ops: &["up", "down", "set", "mute"],
-	press_only: &[],
 	can_repeat: true,
 	required: &["input"],
 	behavior: &SourceVolume,
 	new_state,
+	..Kind::BASE
 };
 
 // ----- Mute Toggle -----
@@ -322,8 +322,8 @@ impl Behavior for MuteToggle {
 	}
 
 	// talk: on only while the key is held (push to talk). holdMute: off only while held.
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
-		let mode = k.op(&args);
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
+		let mode = press.op;
 		require_input(k)?;
 		match mode.as_str() {
 			"toggle" => toggle_mute(k).await,
@@ -352,10 +352,10 @@ pub static MUTE_TOGGLE: Kind = Kind {
 	press_key: "mode",
 	ops: &["toggle", "mute", "unmute", "talk", "holdMute"],
 	press_only: &["talk", "holdMute"],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &MuteToggle,
 	new_state,
+	..Kind::BASE
 };
 
 // ----- Monitor Set -----
@@ -396,11 +396,11 @@ impl Behavior for MonitorSet {
 		k.show_name_title(&k.s_str("input"));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let input = require_input(k)?;
 		let target = monitor_target(k);
 		let current = st(k).monitor_type.clone();
-		let off = k.op(&args) == "off" || (k.s_truthy("pressAgainOff") && current.as_deref() == Some(target) && !k.is_in_multi_action());
+		let off = press.op == "off" || (k.s_truthy("pressAgainOff") && current.as_deref() == Some(target) && !k.is_in_multi_action());
 		let next = if off { "OBS_MONITORING_TYPE_NONE" } else { target };
 		k.call("SetInputAudioMonitorType", json!({ "inputName": input, "monitorType": next })).await?;
 		st(k).monitor_type = Some(next.to_string());
@@ -419,11 +419,10 @@ pub static MONITOR_SET: Kind = Kind {
 	},
 	press_key: "press",
 	ops: &["set", "off"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &MonitorSet,
 	new_state,
+	..Kind::BASE
 };
 
 // ----- Volume dial: turn for volume, press or touch to mute (or what pressAction says). -----
@@ -522,30 +521,27 @@ pub static INPUT_VOLUME: Kind = Kind {
 			json!({ "input": "", "unit": "db", "step": 1, "allowBoost": false, "pressAction": "mute", "disableTouch": false, "showMeter": true }),
 		)
 	},
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &InputVolume,
 	new_state,
+	..Kind::BASE
 };
-
-const _: &str = ID;
 
 #[cfg(test)]
 mod tests {
+	use base64::Engine;
+
 	use super::super::testing::*;
 	use super::*;
-	use base64::Engine;
+	use crate::actions::Gesture;
 
 	#[tokio::test]
 	async fn a_failed_press_is_kept_for_the_settings_page_until_a_press_works() {
 		let (_plugin, k) = key(&MUTE_TOGGLE, json!({ "input": "" }));
-		k.act(MuteToggle.on_press(&k, None)).await;
+		k.act(k.press(Gesture::Press, false)).await;
 		assert_eq!(k.last_error().as_deref(), Some("no audio source selected"));
 		set(&k, "input", json!("Mic"));
-		k.act(MuteToggle.on_press(&k, None)).await;
+		k.act(k.press(Gesture::Press, false)).await;
 		assert_eq!(k.last_error(), None);
 	}
 
@@ -572,7 +568,7 @@ mod tests {
 	async fn push_to_talk_on_while_held_off_again_on_release() {
 		for (mode, expected) in [("talk", [false, true]), ("holdMute", [true, false])] {
 			let (_plugin, k) = key(&MUTE_TOGGLE, json!({ "input": "Mic", "mode": mode }));
-			MuteToggle.on_press(&k, None).await.unwrap_or_default();
+			k.press(Gesture::Press, false).await.unwrap_or_default();
 			MuteToggle.on_release(&k).await.unwrap_or_default();
 			let muted: Vec<bool> = calls(&k).iter().map(|(_, d)| d["inputMuted"].as_bool().unwrap_or(false)).collect();
 			assert_eq!(muted, expected, "{mode}");

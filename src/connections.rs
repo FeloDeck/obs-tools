@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::emitter::Emitter;
 use crate::js::{self, fmt};
-use crate::obs::ObsClient;
+use crate::obs::{ObsClient, Status};
 use crate::obs_state::ObsState;
 use crate::timers::{Timer, set_timeout};
 
@@ -149,14 +149,14 @@ pub struct ConnectionManager {
 	default_config: RefCell<Resolved>,
 	me: std::rc::Weak<ConnectionManager>,
 	pub on_default_changed: Emitter<Resolved>,
-	/// (key, status, error)
-	pub on_status: Emitter<(String, String, String)>,
+	/// The status of a connection changed.
+	pub on_status: Emitter<()>,
 }
 
 /// What testing a connection found, for the setup page.
 pub struct TestResult {
 	pub ok: bool,
-	pub status: String,
+	pub status: Status,
 	pub message: String,
 	pub version: Option<Value>,
 }
@@ -218,12 +218,12 @@ impl ConnectionManager {
 				let client = ObsClient::new(&resolved.host, resolved.port, &resolved.password, &key);
 				let state = ObsState::new(client.clone());
 				let weak = self.me.clone();
-				let (host, port, k) = (resolved.host.clone(), resolved.port, key.clone());
+				let (host, port) = (resolved.host.clone(), resolved.port);
 				client.on_status.on(move |(status, error)| {
 					let Some(me) = weak.upgrade() else { return };
 					let suffix = if error.is_empty() { String::new() } else { format!(": {error}") };
-					(me.log)(&format!("OBS {host}:{} {status}{suffix}", fmt(port)));
-					me.on_status.emit(&(k.clone(), status.clone(), error.clone()));
+					(me.log)(&format!("OBS {host}:{} {}{suffix}", fmt(port), status.name()));
+					me.on_status.emit(&());
 				});
 				let entry = Rc::new(Entry { client: client.clone(), state, users: Cell::new(0), stop_timer: RefCell::new(None) });
 				self.entries.borrow_mut().insert(key.clone(), entry.clone());
@@ -252,14 +252,11 @@ impl ConnectionManager {
 		let tx = RefCell::new(Some(tx));
 		let weak = Rc::downgrade(&client);
 		client.on_status.on(move |(status, error)| {
-			let result = match status.as_str() {
-				"connected" => TestResult {
-					ok: true,
-					status: status.clone(),
-					message: String::new(),
-					version: weak.upgrade().and_then(|c| c.version()),
-				},
-				"auth" | "offline" | "error" => TestResult { ok: false, status: status.clone(), message: error.clone(), version: None },
+			let result = match status {
+				Status::Connected => {
+					TestResult { ok: true, status: *status, message: String::new(), version: weak.upgrade().and_then(|c| c.version()) }
+				}
+				status if status.is_failure() => TestResult { ok: false, status: *status, message: error.clone(), version: None },
 				_ => return,
 			};
 			if let Some(tx) = tx.borrow_mut().take() {

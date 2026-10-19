@@ -7,6 +7,7 @@ use crate::Res;
 use crate::i18n::{num, t};
 use crate::icons::colors;
 use crate::js::{self, truthy};
+use crate::obs_state::Change;
 use crate::render::dial_icon;
 use crate::timers::{Timer, set_timeout};
 
@@ -23,7 +24,7 @@ struct TransitionState {
 struct TransitionDial;
 
 fn transitions(k: &KeyRc) -> std::cell::RefMut<'_, TransitionState> {
-	k.x::<TransitionState>()
+	k.own::<TransitionState>()
 }
 
 async fn load_transitions(k: &KeyRc) {
@@ -150,13 +151,9 @@ pub static TRANSITION_DIAL: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.transitiondial",
 	name: "TransitionDial",
 	defaults: || defaults(json!({ "step": 50, "pressAction": "next", "disableTouch": false })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &TransitionDial,
 	new_state: || Box::new(TransitionState::default()),
+	..Kind::BASE
 };
 
 // ----- Scene dial: turn to pick a scene (with a picture of it), press to switch. -----
@@ -177,7 +174,7 @@ struct SceneDialState {
 struct SceneDial;
 
 fn dial(k: &KeyRc) -> std::cell::RefMut<'_, SceneDialState> {
-	k.x::<SceneDialState>()
+	k.own::<SceneDialState>()
 }
 
 fn target(k: &KeyRc) -> Option<String> {
@@ -274,8 +271,8 @@ impl Behavior for SceneDial {
 		}
 	}
 
-	async fn on_state_change(&self, k: &KeyRc, what: &str) -> Res<()> {
-		if matches!(what, "program" | "preview" | "scenes") {
+	async fn on_state_change(&self, k: &KeyRc, change: Change) -> Res<()> {
+		if matches!(change, Change::Program | Change::Preview | Change::Scenes) {
 			let selected = dial(k).selected.clone();
 			if let Some(selected) = selected
 				&& !k.data().scenes.contains(&selected)
@@ -369,13 +366,9 @@ pub static SCENE_DIAL: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.scenedial",
 	name: "SceneDial",
 	defaults: || defaults(json!({ "mode": "pick", "disableTouch": false })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &SceneDial,
 	new_state: || Box::new(SceneDialState::default()),
+	..Kind::BASE
 };
 
 // ----- Filter dial: turn to change one number of a filter, press to turn the filter on or off. -----
@@ -526,7 +519,7 @@ struct FilterDialState {
 struct FilterDial;
 
 fn fd(k: &KeyRc) -> std::cell::RefMut<'_, FilterDialState> {
-	k.x::<FilterDialState>()
+	k.own::<FilterDialState>()
 }
 
 async fn load_filter(k: &KeyRc) {
@@ -780,13 +773,10 @@ pub static FILTER_DIAL: Kind = Kind {
 			json!({ "source": "", "filter": "", "setting": "", "step": "", "min": "", "max": "", "pressAction": "toggle", "disableTouch": false }),
 		)
 	},
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
 	required: &["source", "filter", "setting"],
 	behavior: &FilterDial,
 	new_state: || Box::new(FilterDialState::default()),
+	..Kind::BASE
 };
 
 #[cfg(test)]

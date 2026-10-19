@@ -3,10 +3,11 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::actions::Gesture;
+use crate::actions::text::{TEXT_ACTIONS, TEXT_KINDS};
 use crate::glyph_fit::FIT;
 use crate::i18n::DE;
 use crate::icons::{COLORS, GLYPHS, MEDIA_GLYPHS, VOLUME_GLYPHS};
-use crate::text_gestures::{TEXT_ACTIONS, TEXT_GESTURES, TEXT_KINDS};
 
 pub const SHARED_JS: &str = "de.felitendo.obs-tools.sdPlugin/pi/lib/shared.js";
 
@@ -41,7 +42,7 @@ pub fn shared_js() -> String {
 		("VOLUME_GLYPHS", pairs(VOLUME_GLYPHS)),
 		("MEDIA_GLYPHS", pairs(MEDIA_GLYPHS)),
 		("TEXT_ACTIONS", Value::from(TEXT_ACTIONS.to_vec())),
-		("TEXT_GESTURES", Value::from(TEXT_GESTURES.to_vec())),
+		("TEXT_GESTURES", Value::from(Gesture::ALL.map(Gesture::name).to_vec())),
 		("TEXT_KINDS", pairs(TEXT_KINDS)),
 	];
 	let mut out = String::from("// Written by `cargo xtask manifest` from the tables of the plugin (src/). Do not edit.\n");

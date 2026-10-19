@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
 use super::basics::scene_name;
-use super::{Behavior, KeyRc, Kind, PressArgs, Reply2Pi, defaults, patch};
+use super::{Behavior, KeyRc, Kind, PiReply, Press, defaults, patch};
 use crate::Res;
 use crate::animation::{Run, diff_transforms, normalize_phase, run_animation, total_duration};
 use crate::desktop::{active_x11_window, session_type, xcomposite_window_value};
@@ -58,7 +58,7 @@ struct AnimationState {
 struct SourceAnimation;
 
 fn anim(k: &KeyRc) -> std::cell::RefMut<'_, AnimationState> {
-	k.x::<AnimationState>()
+	k.own::<AnimationState>()
 }
 
 async fn animate(k: &KeyRc) -> Res<()> {
@@ -113,12 +113,12 @@ impl Behavior for SourceAnimation {
 		k.set_state(if running { 1 } else { 0 });
 	}
 
-	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
 		animate(k).await
 	}
 
 	// The settings page drives recording and import.
-	async fn on_pi_message(&self, k: &KeyRc, message: &Value, reply: Reply2Pi) -> Res<()> {
+	async fn on_pi_message(&self, k: &KeyRc, message: &Value, reply: PiReply) -> Res<()> {
 		match message.get("type").and_then(Value::as_str).unwrap_or("") {
 			"recordStart" => {
 				let scene = scene_name(k, "scene");
@@ -198,13 +198,10 @@ pub static SOURCE_ANIMATION: Kind = Kind {
 			"filterEnd": "none",
 		}))
 	},
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
 	required: &["source"],
 	behavior: &SourceAnimation,
 	new_state: || Box::new(AnimationState::default()),
+	..Kind::BASE
 };
 
 // ----- Video Player: one media source, many files. Each key plays its own file. -----
@@ -217,7 +214,7 @@ struct VideoState {
 struct VideoPlayer;
 
 fn video(k: &KeyRc) -> std::cell::RefMut<'_, VideoState> {
-	k.x::<VideoState>()
+	k.own::<VideoState>()
 }
 
 fn name_or_input(k: &KeyRc, file_key: &str) -> String {
@@ -233,12 +230,12 @@ impl Behavior for VideoPlayer {
 		k.show_name_title(&name_or_input(k, "file"));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let input = k.s_val("input");
 		if !truthy(Some(&input)) {
 			return Err("no media source selected".into());
 		}
-		let op = k.op(&args);
+		let op = press.op;
 		let current = video(k).playback.clone();
 		if op == "stop" {
 			match current {
@@ -320,11 +317,10 @@ pub static VIDEO_PLAYER: Kind = Kind {
 	},
 	press_key: "press",
 	ops: &["play", "stop", "restart"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &VideoPlayer,
 	new_state: || Box::new(VideoState::default()),
+	..Kind::BASE
 };
 
 // ----- Image Source: one image source, many pictures. Each key shows its own picture. -----
@@ -339,7 +335,7 @@ struct ImageState {
 struct ImageSource;
 
 fn image(k: &KeyRc) -> std::cell::RefMut<'_, ImageState> {
-	k.x::<ImageState>()
+	k.own::<ImageState>()
 }
 
 async fn hide_image(k: &KeyRc, scene: &Value, item: &Value) -> Res<()> {
@@ -385,13 +381,13 @@ impl Behavior for ImageSource {
 		}
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let input = k.s_val("input");
 		let file = k.s_val("file");
 		if !truthy(Some(&input)) {
 			return Err("no image source selected".into());
 		}
-		let mode = k.op(&args);
+		let mode = press.op;
 		let scene = scene_name(k, "scene");
 		let item = scene_item(k, &scene, &input).await?;
 		image(k).item_id = Some(item.clone());
@@ -447,11 +443,10 @@ pub static IMAGE_SOURCE: Kind = Kind {
 	},
 	press_key: "mode",
 	ops: &["toggle", "show", "hide"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &ImageSource,
 	new_state: || Box::new(ImageState::default()),
+	..Kind::BASE
 };
 
 // ----- Browser Source -----
@@ -468,9 +463,9 @@ impl Behavior for BrowserSource {
 		k.show_name_title(&k.s_str("input"));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let input = k.s_val("input");
-		let operation = k.op(&args);
+		let operation = press.op;
 		if !truthy(Some(&input)) {
 			return Err("no browser source selected".into());
 		}
@@ -524,11 +519,9 @@ pub static BROWSER_SOURCE: Kind = Kind {
 	},
 	press_key: "operation",
 	ops: &["refresh", "url", "cycle", "visibility"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &BrowserSource,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 // ----- Filter Toggle -----
@@ -541,7 +534,7 @@ struct FilterState {
 struct FilterToggle;
 
 async fn load_filter(k: &KeyRc) {
-	k.x::<FilterState>().enabled = false;
+	k.own::<FilterState>().enabled = false;
 	let (source, filter) = (k.s_val("source"), k.s_val("filter"));
 	if !truthy(Some(&source)) || !truthy(Some(&filter)) {
 		return;
@@ -550,7 +543,7 @@ async fn load_filter(k: &KeyRc) {
 		Ok(r) => truthy(r.get("filterEnabled")),
 		Err(_) => false,
 	};
-	k.x::<FilterState>().enabled = enabled;
+	k.own::<FilterState>().enabled = enabled;
 }
 
 #[async_trait(?Send)]
@@ -572,21 +565,21 @@ impl Behavior for FilterToggle {
 			&& data.get("sourceName") == k.s("source").as_ref()
 			&& data.get("filterName") == k.s("filter").as_ref()
 		{
-			k.x::<FilterState>().enabled = truthy(data.get("filterEnabled"));
+			k.own::<FilterState>().enabled = truthy(data.get("filterEnabled"));
 			self.render(k);
 		}
 		Ok(())
 	}
 
 	fn render(&self, k: &KeyRc) {
-		let enabled = k.x::<FilterState>().enabled;
+		let enabled = k.own::<FilterState>().enabled;
 		k.set_state(if enabled { 1 } else { 0 });
 		k.show_name_title(&k.s_str("filter"));
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let (source, filter) = (k.s_val("source"), k.s_val("filter"));
-		let mode = k.op(&args);
+		let mode = press.op;
 		if !truthy(Some(&source)) || !truthy(Some(&filter)) {
 			return Err("no filter selected".into());
 		}
@@ -596,7 +589,7 @@ impl Behavior for FilterToggle {
 			_ => !truthy(k.call("GetSourceFilter", json!({ "sourceName": source, "filterName": filter })).await?.get("filterEnabled")),
 		};
 		k.call("SetSourceFilterEnabled", json!({ "sourceName": source, "filterName": filter, "filterEnabled": enabled })).await?;
-		k.x::<FilterState>().enabled = enabled;
+		k.own::<FilterState>().enabled = enabled;
 		self.render(k);
 		Ok(())
 	}
@@ -608,11 +601,10 @@ pub static FILTER_TOGGLE: Kind = Kind {
 	defaults: || defaults(json!({ "source": "", "filter": "", "mode": "toggle", "hold": "none", "double": "none", "showName": false })),
 	press_key: "mode",
 	ops: &["toggle", "enable", "disable"],
-	press_only: &[],
-	can_repeat: false,
 	required: &["source", "filter"],
 	behavior: &FilterToggle,
 	new_state: || Box::new(FilterState::default()),
+	..Kind::BASE
 };
 
 // ----- Focused Window Capture: points a Window Capture (Xcomposite) source at the focused window. -----
@@ -621,7 +613,7 @@ struct FocusedWindow;
 
 #[async_trait(?Send)]
 impl Behavior for FocusedWindow {
-	async fn on_press(&self, k: &KeyRc, _args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, _press: Press) -> Res<()> {
 		let input = k.s_val("input");
 		if !truthy(Some(&input)) {
 			return Err("no window capture source selected".into());
@@ -655,13 +647,9 @@ pub static FOCUSED_WINDOW: Kind = Kind {
 	uuid: "de.felitendo.obs-tools.focusedwindow",
 	name: "FocusedWindow",
 	defaults: || defaults(json!({ "input": "", "delay": 0 })),
-	press_key: "",
-	ops: &[],
-	press_only: &[],
-	can_repeat: false,
 	required: &["input"],
 	behavior: &FocusedWindow,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 #[cfg(test)]

@@ -561,7 +561,7 @@ impl Twitch {
 			config.insert("token".into(), token.into());
 			config.insert("refreshToken".into(), refresh_token.into());
 			config.insert("clientId".into(), pick("client_id", client_id.into()));
-			// login and user_id may be missing; JSON then has no such key, like undefined in JS.
+			// login and user_id may be missing. Then the config has no such key either.
 			for (key, from) in [("login", "login"), ("userId", "user_id")] {
 				match data.get(from) {
 					Some(v) => config.insert(key.into(), v.clone()),

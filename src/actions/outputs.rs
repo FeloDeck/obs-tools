@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use super::{Behavior, KeyRc, Kind, PressArgs, Stop, defaults};
+use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::i18n::t;
 use crate::icons::colors;
 use crate::js::{self, truthy};
@@ -49,7 +49,7 @@ struct OutputState {
 struct OutputToggle(&'static OutputConfig);
 
 fn out(k: &KeyRc) -> std::cell::RefMut<'_, OutputState> {
-	k.x::<OutputState>()
+	k.own::<OutputState>()
 }
 
 impl OutputToggle {
@@ -128,8 +128,8 @@ impl Behavior for OutputToggle {
 		}
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
-		let mode = k.op(&args);
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
+		let mode = press.op;
 		if std::ptr::eq(self.0, &RECORD) && mode == "pause" {
 			if self.active(k) {
 				k.call("ToggleRecordPause", json!({})).await?;
@@ -153,11 +153,9 @@ pub static RECORD_TOGGLE: Kind = Kind {
 	defaults: output_defaults,
 	press_key: "mode",
 	ops: &["toggle", "start", "stop", "pause"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &OutputToggle(&RECORD),
 	new_state: || Box::new(OutputState::default()),
+	..Kind::BASE
 };
 
 pub static STREAM_TOGGLE: Kind = Kind {
@@ -166,11 +164,9 @@ pub static STREAM_TOGGLE: Kind = Kind {
 	defaults: output_defaults,
 	press_key: "mode",
 	ops: &["toggle", "start", "stop"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &OutputToggle(&STREAM),
 	new_state: || Box::new(OutputState::default()),
+	..Kind::BASE
 };
 
 // ----- Virtual Camera -----
@@ -183,9 +179,9 @@ impl Behavior for VirtualCam {
 		k.set_state(if k.data().virtualcam.active { 1 } else { 0 });
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let active = k.data().virtualcam.active;
-		let mode = k.op(&args);
+		let mode = press.op;
 		if mode == "start" || (mode == "toggle" && !active) {
 			if active {
 				return Ok(());
@@ -220,11 +216,8 @@ pub static VIRTUAL_CAM: Kind = Kind {
 	defaults: || defaults(json!({ "mode": "toggle", "hold": "none", "double": "none" })),
 	press_key: "mode",
 	ops: &["toggle", "start", "stop"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &VirtualCam,
-	new_state: || Box::new(()),
+	..Kind::BASE
 };
 
 // ----- Instant Replay: save the replay buffer (and play it, clip it), or turn it on or off. -----
@@ -239,7 +232,7 @@ struct ReplayState {
 struct InstantReplay;
 
 fn replay_state(k: &KeyRc) -> std::cell::RefMut<'_, ReplayState> {
-	k.x::<ReplayState>()
+	k.own::<ReplayState>()
 }
 
 async fn replay(k: &KeyRc) -> Res<()> {
@@ -377,8 +370,8 @@ impl Behavior for InstantReplay {
 		});
 	}
 
-	async fn on_press(&self, k: &KeyRc, args: Option<PressArgs>) -> Res<()> {
-		let op = k.op(&args);
+	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
+		let op = press.op;
 		let on = k.data().replay.active;
 		match op.as_str() {
 			"buffer" => {
@@ -425,9 +418,7 @@ pub static INSTANT_REPLAY: Kind = Kind {
 	},
 	press_key: "press",
 	ops: &["save", "buffer", "bufferStart", "bufferStop"],
-	press_only: &[],
-	can_repeat: false,
-	required: &[],
 	behavior: &InstantReplay,
 	new_state: || Box::new(ReplayState::default()),
+	..Kind::BASE
 };
