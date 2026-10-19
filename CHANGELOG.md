@@ -2,6 +2,19 @@
 
 What each release brings, newest first.
 
+## v0.2.0
+
+_19 October 2026_
+
+Welcome to OBS Tools for OpenDeck `v0.2.0`! The plugin no longer needs Node.js.
+
+### Highlights
+
+- Install it and it runs, without Node.js
+- Runs on ARM64 computers too
+- Works on older Linux distributions
+- Your keys and settings stay as they are
+
 ## v0.1.0
 
 _14 October 2026_
