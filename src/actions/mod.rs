@@ -1121,10 +1121,15 @@ impl Key {
 		}
 		let behavior = self.behavior();
 		match event {
-			"dialDown" => self.act(behavior.on_dial_down(self)).await,
-			"dialUp" => self.act(behavior.on_dial_up(self)).await,
-			_ => self.act(behavior.on_touch_tap(self)).await,
-		};
+			"dialDown" => {
+				self.act(behavior.on_dial_down(self)).await;
+			}
+			// Not act(): letting go of the dial must not clear the error of the press.
+			"dialUp" => self.safe(behavior.on_dial_up(self)).await,
+			_ => {
+				self.act(behavior.on_touch_tap(self)).await;
+			}
+		}
 	}
 
 	pub async fn pi_message(self: &Rc<Self>, payload: &Value, reply: Reply2Pi) -> Res<()> {
@@ -1270,6 +1275,17 @@ mod tests {
 		key.x::<ProbeState>().seen.clone()
 	}
 
+	struct Broken;
+
+	#[async_trait(?Send)]
+	impl Behavior for Broken {
+		async fn on_dial_down(&self, _k: &KeyRc) -> Res<()> {
+			Err(Error::from("no source selected"))
+		}
+	}
+
+	static BROKEN: Kind = Kind { name: "Broken", behavior: &Broken, new_state: || Box::new(()), ..PROBE };
+
 	async fn local<F: std::future::Future>(f: F) -> F::Output {
 		tokio::task::LocalSet::new().run_until(f).await
 	}
@@ -1311,6 +1327,17 @@ mod tests {
 			let (_plugin, multi) = key(&PROBE, json!({ "mode": "a", "hold": "b" }));
 			multi.key_down(true).await;
 			assert_eq!(seen(&multi), ["a"]);
+		})
+		.await;
+	}
+
+	#[tokio::test]
+	async fn letting_go_of_the_dial_keeps_the_error_of_the_press() {
+		local(async {
+			let (_plugin, k) = key(&BROKEN, json!({}));
+			k.dial_event("dialDown").await;
+			k.dial_event("dialUp").await;
+			assert_eq!(k.last_error().as_deref(), Some("no source selected"));
 		})
 		.await;
 	}
