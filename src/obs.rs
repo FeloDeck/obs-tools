@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::emitter::Emitter;
-use crate::js::{self, fmt, truthy};
+use crate::js::{self, fmt};
 use crate::timers::{Timer, set_timeout};
 use crate::{Error, Res};
 
@@ -141,7 +141,7 @@ impl ObsClient {
 	pub fn new(host: &str, port: f64, password: &str, name: &str) -> Rc<Self> {
 		Rc::new_cyclic(|me| ObsClient {
 			host: host.to_string(),
-			port: if js::truthy_num(port) { port } else { 4455.0 },
+			port: crate::settings::or(port, 4455.0),
 			password: password.to_string(),
 			name: name.to_string(),
 			status: Cell::new(Status::Idle),
@@ -341,7 +341,7 @@ impl ObsClient {
 			Some(OP_HELLO) => self.on_hello(attempt, &d),
 			Some(OP_IDENTIFIED) => self.on_identified(serial, attempt),
 			Some(OP_EVENT) => {
-				let kind = js::to_string(d.get("eventType"));
+				let kind = d["eventType"].as_str().unwrap_or_default().to_string();
 				let data = match d.get("eventData") {
 					None | Some(Value::Null) => Value::Object(Map::new()),
 					Some(data) => data.clone(),
@@ -351,20 +351,20 @@ impl ObsClient {
 				self.on_typed.emit(&event);
 			}
 			Some(op @ (OP_REQUEST_RESPONSE | OP_REQUEST_BATCH_RESPONSE)) => {
-				let id = js::to_string(d.get("requestId"));
-				let Some(pending) = self.pending.borrow_mut().remove(&id) else { return };
+				let id = d["requestId"].as_str().unwrap_or_default();
+				let Some(pending) = self.pending.borrow_mut().remove(id) else { return };
 				let result = if op == OP_REQUEST_BATCH_RESPONSE {
 					Ok(match d.get("results") {
 						None | Some(Value::Null) => Value::Array(Vec::new()),
 						Some(results) => results.clone(),
 					})
-				} else if truthy(d.get("requestStatus").and_then(|s| s.get("result"))) {
+				} else if d["requestStatus"]["result"] == true {
 					Ok(match d.get("responseData") {
 						None | Some(Value::Null) => Value::Object(Map::new()),
 						Some(data) => data.clone(),
 					})
 				} else {
-					Err(obs_error(d.get("requestType"), d.get("requestStatus")))
+					Err(obs_error(&d["requestType"], &d["requestStatus"]))
 				};
 				let _ = pending.send(result);
 			}
@@ -376,17 +376,15 @@ impl ObsClient {
 		let mut identify = Map::new();
 		identify.insert("rpcVersion".into(), 1.into());
 		identify.insert("eventSubscriptions".into(), self.subscriptions.get().into());
-		let auth = d.get("authentication");
-		if truthy(auth) {
+		if let Some(auth) = d.get("authentication").filter(|a| a.is_object()) {
 			if self.password.is_empty() {
 				attempt.close_code.set(CLOSE_AUTH_FAILED);
 				*attempt.error.borrow_mut() = "OBS asks for a password".into();
 				self.send_message(Message::Close(Some(CloseFrame { code: CloseCode::Normal, reason: "".into() })));
 				return;
 			}
-			let salt = js::to_string(auth.and_then(|a| a.get("salt")));
-			let challenge = js::to_string(auth.and_then(|a| a.get("challenge")));
-			identify.insert("authentication".into(), auth_response(&self.password, &salt, &challenge).into());
+			let (salt, challenge) = (auth["salt"].as_str().unwrap_or_default(), auth["challenge"].as_str().unwrap_or_default());
+			identify.insert("authentication".into(), auth_response(&self.password, salt, challenge).into());
 		}
 		let mut version = Map::new();
 		version.insert("obs".into(), Value::Null);
@@ -526,7 +524,7 @@ impl ObsClient {
 
 	/// requests: [{ requestType, requestData }]. Resolves with the raw results.
 	pub fn batch(&self, requests: Vec<Value>, execution: BatchExecution, halt_on_failure: bool, timeout: Option<f64>) -> Reply<Vec<Value>> {
-		let wait = timeout.unwrap_or_else(|| js::max(10000.0, requests.len() as f64 * 100.0));
+		let wait = timeout.unwrap_or_else(|| (requests.len() as f64 * 100.0).max(10000.0));
 		let mut d = Map::new();
 		d.insert("executionType".into(), (execution as u8).into());
 		d.insert("haltOnFailure".into(), halt_on_failure.into());
@@ -541,12 +539,11 @@ impl ObsClient {
 	}
 }
 
-fn obs_error(request_type: Option<&Value>, status: Option<&Value>) -> Error {
-	let comment = status.and_then(|s| s.get("comment"));
-	if truthy(comment) {
-		return js::to_string(comment).into();
+fn obs_error(request_type: &Value, status: &Value) -> Error {
+	match status["comment"].as_str() {
+		Some(comment) if !comment.is_empty() => comment.into(),
+		_ => format!("{} failed (code {})", request_type.as_str().unwrap_or_default(), status["code"]).into(),
 	}
-	format!("{} failed (code {})", js::to_string(request_type), js::to_string(status.and_then(|s| s.get("code")))).into()
 }
 
 // Why a connection failed, in the words the settings page knows.

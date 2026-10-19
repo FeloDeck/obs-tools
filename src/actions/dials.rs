@@ -7,7 +7,7 @@ use super::{Behavior, KeyRc, Kind, Stop, defaults, same_name};
 use crate::Res;
 use crate::i18n::{num, t};
 use crate::icons::colors;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs_state::Change;
 use crate::render::dial_icon;
 use crate::settings::{self, or, read};
@@ -73,8 +73,8 @@ impl Behavior for TransitionDial {
 
 	fn render(&self, k: &KeyRc) {
 		let transition = k.data().transition;
-		let fixed = truthy(current_transition(k).as_ref().and_then(|c| c.get("transitionFixed")));
-		let duration = transition.duration.filter(|d| js::truthy_num(*d));
+		let fixed = current_transition(k).is_some_and(|c| c["transitionFixed"] == true);
+		let duration = transition.duration.filter(|d| *d != 0.0 && !d.is_nan());
 		let value = if fixed {
 			t("no time")
 		} else {
@@ -110,10 +110,8 @@ impl Behavior for TransitionDial {
 
 	async fn on_dial_rotate(&self, k: &KeyRc, ticks: f64, _pressed: bool) -> Res<()> {
 		let transition = k.data().transition;
-		if truthy(current_transition(k).as_ref().and_then(|c| c.get("transitionFixed"))) {
-			return Err(
-				format!("{} has no duration", js::to_string(transition.name.map(Value::from).as_ref().or(Some(&Value::Null)))).into()
-			);
+		if current_transition(k).is_some_and(|c| c["transitionFixed"] == true) {
+			return Err(format!("{} has no duration", transition.name.unwrap_or_default()).into());
 		}
 		let step = js::max(10.0, or(k.settings::<TransitionDialSettings>().step, 50.0));
 		let duration = js::min(MAX_DURATION, js::max(MIN_DURATION, transition.duration.unwrap_or(300.0) + ticks * step));
@@ -521,7 +519,7 @@ pub fn filter_range(kind: &str, key: &str) -> Option<[f64; 3]> {
 }
 
 fn format_number(value: f64, step: f64) -> String {
-	let step = if js::truthy_num(step) { step } else { 1.0 };
+	let step = or(step, 1.0);
 	let decimals = js::min(3.0, js::max(0.0, -step.log10().floor()));
 	num(value, if decimals.is_nan() { 0 } else { decimals as usize })
 }
@@ -541,6 +539,10 @@ struct FilterDialSettings {
 	max: Option<f64>,
 	/// "toggle" (the filter), "reset" (the number) or "nothing".
 	press_action: String,
+}
+
+fn filter_enabled(filter: &Map<String, Value>) -> bool {
+	filter.get("filterEnabled").and_then(Value::as_bool).unwrap_or(false)
 }
 
 #[derive(Default)]
@@ -566,9 +568,9 @@ async fn load_filter(k: &KeyRc) {
 	let result: Res<()> = async {
 		let found = k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await?;
 		let kind = found.get("filterKind").cloned().unwrap_or(Value::Null);
-		fd(k).filter = Some(js::object(Some(&found)));
+		fd(k).filter = found.as_object().cloned();
 		let defaults = k.call("GetSourceFilterDefaultSettings", json!({ "filterKind": kind })).await?;
-		fd(k).defaults = Some(js::object(defaults.get("defaultFilterSettings")));
+		fd(k).defaults = Some(defaults["defaultFilterSettings"].as_object().cloned().unwrap_or_default());
 		Ok(())
 	}
 	.await;
@@ -591,10 +593,9 @@ async fn refresh_filter(k: &KeyRc, max_age: i64) {
 		let mut s = fd(k);
 		s.read_at = js::now();
 		let old = s.filter.clone().unwrap_or_default();
-		let settings_changed = js::stringify(fresh.get("filterSettings").unwrap_or(&Value::Null))
-			!= js::stringify(old.get("filterSettings").unwrap_or(&Value::Null));
+		let settings_changed = !js::same(&fresh["filterSettings"], old.get("filterSettings").unwrap_or(&Value::Null));
 		let changed = settings_changed || fresh.get("filterEnabled") != old.get("filterEnabled");
-		s.filter = Some(js::object(Some(&fresh)));
+		s.filter = fresh.as_object().cloned();
 		changed
 	};
 	if changed {
@@ -608,12 +609,12 @@ fn range(k: &KeyRc) -> (f64, f64, f64) {
 	let (kind, default) = {
 		let d = fd(k);
 		(
-			js::str_or_empty(d.filter.as_ref().and_then(|f| f.get("filterKind"))),
+			d.filter.as_ref().and_then(|f| f.get("filterKind")).and_then(Value::as_str).unwrap_or_default().to_string(),
 			d.defaults.as_ref().and_then(|d| d.get(&s.setting)).cloned(),
 		)
 	};
 	let known = filter_range(&kind, &s.setting);
-	let guess_max = if js::number_or(default.as_ref(), 0.0).abs() <= 1.0 { 1.0 } else { 100.0 };
+	let guess_max = if default.as_ref().and_then(Value::as_f64).unwrap_or(0.0).abs() <= 1.0 { 1.0 } else { 100.0 };
 	let min = s.min.unwrap_or_else(|| known.map_or(0.0, |r| r[0]));
 	let max = s.max.unwrap_or_else(|| known.map_or(guess_max, |r| r[1]));
 	let step = if s.step > 0.0 { s.step } else { known.map_or((max - min) / 100.0, |r| r[2]) };
@@ -630,15 +631,12 @@ fn filter_value(k: &KeyRc) -> f64 {
 		.and_then(|fs| fs.get(&key))
 		.filter(|v| !v.is_null())
 		.or_else(|| s.defaults.as_ref().and_then(|d| d.get(&key)));
-	match v {
-		Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
-		v => js::number_or(v, 0.0),
-	}
+	v.and_then(Value::as_f64).unwrap_or(0.0)
 }
 
 fn set_filter_value(k: &KeyRc, setting: &str, value: Value) {
 	if let Some(filter) = fd(k).filter.as_mut() {
-		let mut settings = js::object(filter.get("filterSettings"));
+		let mut settings = filter.get("filterSettings").and_then(Value::as_object).cloned().unwrap_or_default();
 		settings.insert(setting.to_string(), value);
 		filter.insert("filterSettings".into(), Value::Object(settings));
 	}
@@ -727,7 +725,7 @@ impl Behavior for FilterDial {
 		};
 		let (min, max, step) = range(k);
 		let value = filter_value(k);
-		let on = truthy(filter.get("filterEnabled"));
+		let on = filter_enabled(&filter);
 		let indicator = if max > min { js::round(((value - min) / (max - min)) * 100.0) } else { 0.0 };
 		k.set_feedback(json!({
 			"title": format!("{} · {}", s.filter, t(&filter_value_label(&s.setting))),
@@ -785,7 +783,7 @@ impl Behavior for FilterDial {
 			.await?;
 			set_filter_value(k, &setting, value);
 		} else if action == "toggle" {
-			let enabled = !truthy(filter.get("filterEnabled"));
+			let enabled = !filter_enabled(&filter);
 			k.call("SetSourceFilterEnabled", json!({ "sourceName": s.source, "filterName": s.filter, "filterEnabled": enabled })).await?;
 			if let Some(filter) = fd(k).filter.as_mut() {
 				filter.insert("filterEnabled".into(), enabled.into());

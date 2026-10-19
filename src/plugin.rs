@@ -436,7 +436,7 @@ impl Plugin {
 			}
 			"twitchDeviceFlow" => match self.twitch.start_device_flow(&m.client_id).await {
 				Ok(flow) => {
-					self.sd.open_url(&js::to_string(Some(&flow.uri)));
+					self.sd.open_url(flow.uri.as_str().unwrap_or_default());
 					reply(json!({ "type": "twitchFlow", "userCode": flow.user_code, "uri": flow.uri }));
 				}
 				Err(error) => reply(json!({ "type": "twitchError", "message": error.message() })),

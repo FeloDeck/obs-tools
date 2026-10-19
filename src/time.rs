@@ -18,11 +18,7 @@ pub fn format_duration(seconds: f64) -> String {
 	let h = (s / 3600.0).floor();
 	let m = ((s % 3600.0) / 60.0).floor();
 	let rest = format!("{:0>2}", crate::js::fmt(s % 60.0));
-	if crate::js::truthy_num(h) {
-		format!("{}:{:0>2}:{rest}", crate::js::fmt(h), crate::js::fmt(m))
-	} else {
-		format!("{}:{rest}", crate::js::fmt(m))
-	}
+	if h > 0.0 { format!("{}:{:0>2}:{rest}", crate::js::fmt(h), crate::js::fmt(m)) } else { format!("{}:{rest}", crate::js::fmt(m)) }
 }
 
 /// A timecode from OBS in whole seconds: "01:02:03.456" -> 3723.

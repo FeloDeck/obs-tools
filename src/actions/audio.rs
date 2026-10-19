@@ -7,7 +7,7 @@ use super::{Behavior, KeyRc, Kind, Press, Stop, defaults, same_name};
 use crate::Res;
 use crate::i18n::t;
 use crate::icons::{colors, volume_glyph};
-use crate::js::{self, truthy};
+use crate::js;
 use crate::render::{GlyphKey, dial_icon, glyph_key, meter_level};
 use crate::settings::{self, read};
 use crate::volume::{clamp_db, db_to_fader, fader_to_db, format_volume, read_db, step_volume, volume_request};
@@ -129,7 +129,7 @@ async fn load_input(k: &KeyRc) {
 		(Ok(volume), Ok(mute)) => {
 			let mut s = st(k);
 			s.db = Some(read_db(&volume));
-			s.muted = truthy(mute.get("inputMuted"));
+			s.muted = mute["inputMuted"] == true;
 		}
 		_ => st(k).db = None,
 	}
@@ -164,7 +164,7 @@ fn on_obs_event(k: &KeyRc, kind: &str, data: &Value) {
 	}
 	match kind {
 		"InputVolumeChanged" => st(k).db = Some(read_db(data)),
-		"InputMuteStateChanged" => st(k).muted = truthy(data.get("inputMuted")),
+		"InputMuteStateChanged" => st(k).muted = data["inputMuted"] == true,
 		"InputAudioMonitorTypeChanged" => st(k).monitor_type = data.get("monitorType").and_then(Value::as_str).map(String::from),
 		_ => return,
 	}
@@ -210,7 +210,7 @@ async fn set_volume(k: &KeyRc, value: f64) -> Res<()> {
 async fn toggle_mute(k: &KeyRc) -> Res<()> {
 	let s: AudioSettings = k.settings();
 	let result = k.call("ToggleInputMute", json!({ "inputName": require_input(&s)? })).await?;
-	st(k).muted = truthy(result.get("inputMuted"));
+	st(k).muted = result["inputMuted"] == true;
 	k.render();
 	Ok(())
 }

@@ -2,7 +2,7 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::js::{self, max, number, round as js_round, truthy};
+use crate::js::{self, max, number, round as js_round};
 use crate::obs::{BatchExecution, ObsClient};
 
 pub static FIELDS: &[&str] = &[
@@ -46,14 +46,16 @@ fn round(value: f64, digits: i32) -> f64 {
 }
 
 pub fn has_bounds(transform: Option<&Value>) -> bool {
-	match transform.and_then(|t| t.get("boundsType")) {
-		Some(kind) => truthy(Some(kind)) && kind != "OBS_BOUNDS_NONE",
-		None => false,
-	}
+	transform.and_then(|t| t["boundsType"].as_str()).is_some_and(|kind| !kind.is_empty() && kind != "OBS_BOUNDS_NONE")
 }
 
 fn field<'a>(transform: Option<&'a Value>, name: &str) -> Option<&'a Value> {
 	transform.and_then(|t| t.get(name))
+}
+
+/// A number of the transform the animation starts from, 0 when it has none.
+fn start_value(start: Option<&Value>, name: &str) -> f64 {
+	field(start, name).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
 /// What changed between two transforms, only the fields that moved.
@@ -96,23 +98,25 @@ impl Phase {
 	}
 }
 
+/// A phase as the settings page saves it.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PhaseSettings {
+	duration: f64,
+	delay: f64,
+	easing: String,
+	/// Field name -> how much it changes.
+	changes: Value,
+}
+
 pub fn normalize_phase(phase: &Value) -> Phase {
-	let changes_in = phase.get("changes");
-	let mut changes = Vec::new();
-	for name in FIELDS {
-		let value = number(changes_in.and_then(|c| c.get(*name)));
-		if value.is_finite() && value != 0.0 {
-			changes.push((*name, value));
-		}
-	}
-	let easing = match phase.get("easing") {
-		Some(Value::String(e)) if EASINGS.contains(&e.as_str()) => e.clone(),
-		_ => "linear".into(),
-	};
+	let p: PhaseSettings = crate::settings::read_value(phase);
+	let changes =
+		FIELDS.iter().map(|name| (*name, number(p.changes.get(*name)))).filter(|(_, value)| value.is_finite() && *value != 0.0).collect();
 	Phase {
-		duration: max(0.0, js::number_or(phase.get("duration"), 0.0)),
-		delay: max(0.0, js::number_or(phase.get("delay"), 0.0)),
-		easing,
+		duration: max(0.0, crate::settings::or(p.duration, 0.0)),
+		delay: max(0.0, crate::settings::or(p.delay, 0.0)),
+		easing: if EASINGS.contains(&p.easing.as_str()) { p.easing } else { "linear".into() },
 		changes,
 	}
 }
@@ -149,7 +153,7 @@ pub fn build_frames(start: Option<&Value>, phases: &[Value], fps: f64) -> Frames
 		.copied()
 		.filter(|f| normalized.iter().any(|p| p.change(f).is_some()) && (!BOUNDS.contains(f) || has_bounds(start)))
 		.collect();
-	let mut current: Vec<f64> = fields.iter().map(|f| js::number_or(field(start, f), 0.0)).collect();
+	let mut current: Vec<f64> = fields.iter().map(|f| start_value(start, f)).collect();
 	let mut steps = Vec::new();
 	for phase in &normalized {
 		let wait = js_round((phase.delay / 1000.0) * fps);
@@ -250,8 +254,7 @@ pub fn build_requests(run: &Run) -> (Vec<Value>, usize) {
 		if o.hide_at_end {
 			requests.push(request("Sleep", crate::obj! { "sleepFrames" => 1 }));
 		}
-		let reset: Map<String, Value> =
-			fields.iter().map(|f| (f.to_string(), js::num(value(f, js::number_or(field(run.start, f), 0.0))))).collect();
+		let reset: Map<String, Value> = fields.iter().map(|f| (f.to_string(), js::num(value(f, start_value(run.start, f))))).collect();
 		requests.push(request("SetSceneItemTransform", item(("sceneItemTransform", Value::Object(reset)))));
 	}
 	if filter_at(&o.filter_end) {
@@ -264,10 +267,11 @@ pub async fn run_animation(client: &ObsClient, run: &Run<'_>) -> crate::Res<usiz
 	let (requests, frames) = build_requests(run);
 	let timeout = (frames as f64 / max(1.0, run.fps)) * 1000.0 + 15000.0;
 	let results = client.batch(requests, BatchExecution::SerialFrame, true, Some(timeout)).await?;
-	if let Some(failed) = results.iter().find(|r| !truthy(r.get("requestStatus").and_then(|s| s.get("result")))) {
-		let comment = failed.get("requestStatus").and_then(|s| s.get("comment"));
-		let message = if truthy(comment) { js::to_string(comment) } else { format!("{} failed", js::to_string(failed.get("requestType"))) };
-		return Err(message.into());
+	if let Some(failed) = results.iter().find(|r| r["requestStatus"]["result"] != true) {
+		return Err(match failed["requestStatus"]["comment"].as_str() {
+			Some(comment) if !comment.is_empty() => comment.into(),
+			_ => format!("{} failed", failed["requestType"].as_str().unwrap_or_default()).into(),
+		});
 	}
 	Ok(results.len())
 }

@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::task::spawn_local;
 
 use crate::emitter::Emitter;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs::{BatchExecution, EVENTS_ALL, EVENTS_VOLUME_METERS, ObsClient};
 use crate::timers::{Timer, set_interval};
 
@@ -112,18 +112,8 @@ pub struct ObsState {
 	pub on_stats: Emitter<Value>,
 }
 
-fn string(v: Option<&Value>) -> Option<String> {
-	match v {
-		None | Some(Value::Null) => None,
-		Some(v) => Some(js::to_string(Some(v))),
-	}
-}
-
-fn number(v: Option<&Value>) -> Option<f64> {
-	match v {
-		None | Some(Value::Null) => None,
-		Some(v) => Some(js::number(Some(v))),
-	}
+fn string(v: &Value) -> Option<String> {
+	v.as_str().map(String::from)
 }
 
 impl ObsState {
@@ -207,44 +197,48 @@ impl ObsState {
 		.map(|t| crate::obj! { "requestType" => *t })
 		.collect();
 		let Ok(results) = self.client.batch(requests, BatchExecution::SerialRealtime, false, None).await else { return };
-		let mut data: HashMap<String, Value> = HashMap::new();
+		// The answers by request type. A request that failed has no answer.
+		let mut data: HashMap<&str, &Value> = HashMap::new();
 		for r in &results {
-			let ok = truthy(r.get("requestStatus").and_then(|s| s.get("result")));
-			let value = if ok { r.get("responseData").cloned().unwrap_or(Value::Null) } else { Value::Null };
-			data.insert(js::to_string(r.get("requestType")), value);
+			if r["requestStatus"]["result"] == true
+				&& let (Some(kind), Some(answer)) = (r["requestType"].as_str(), r.get("responseData").filter(|d| !d.is_null()))
+			{
+				data.insert(kind, answer);
+			}
 		}
-		let get = |request: &str, key: &str| data.get(request).and_then(|d| d.get(key)).cloned();
-		let present = |request: &str| data.get(request).is_some_and(truthy_value);
+		let get = |request: &str, key: &str| data.get(request).map_or(&Value::Null, |d| &d[key]);
 		{
 			let mut d = self.data.borrow_mut();
-			if let Some(list) = data.get("GetSceneList").filter(|v| truthy_value(v)) {
+			if let Some(list) = data.get("GetSceneList") {
 				set_scenes(&mut d, list);
 			}
-			d.studio_mode = truthy(get("GetStudioModeEnabled", "studioModeEnabled").as_ref());
-			d.preview_scene = if d.studio_mode { string(get("GetSceneList", "currentPreviewSceneName").as_ref()) } else { None };
+			d.studio_mode = *get("GetStudioModeEnabled", "studioModeEnabled") == true;
+			d.preview_scene = if d.studio_mode { string(get("GetSceneList", "currentPreviewSceneName")) } else { None };
 			d.record = Output {
-				active: truthy(get("GetRecordStatus", "outputActive").as_ref()),
-				paused: truthy(get("GetRecordStatus", "outputPaused").as_ref()),
+				active: *get("GetRecordStatus", "outputActive") == true,
+				paused: *get("GetRecordStatus", "outputPaused") == true,
 				available: false,
 			};
-			d.stream = Output { active: truthy(get("GetStreamStatus", "outputActive").as_ref()), ..Output::default() };
+			d.stream = Output { active: *get("GetStreamStatus", "outputActive") == true, ..Output::default() };
 			d.replay = Output {
-				active: truthy(get("GetReplayBufferStatus", "outputActive").as_ref()),
-				available: present("GetReplayBufferStatus"),
+				active: *get("GetReplayBufferStatus", "outputActive") == true,
+				available: data.contains_key("GetReplayBufferStatus"),
 				..Output::default()
 			};
-			d.virtualcam = Output { active: truthy(get("GetVirtualCamStatus", "outputActive").as_ref()), ..Output::default() };
-			if present("GetCurrentSceneTransition") {
+			d.virtualcam = Output { active: *get("GetVirtualCamStatus", "outputActive") == true, ..Output::default() };
+			if data.contains_key("GetCurrentSceneTransition") {
 				d.transition = Transition {
-					name: string(get("GetCurrentSceneTransition", "transitionName").as_ref()),
-					duration: number(get("GetCurrentSceneTransition", "transitionDuration").as_ref()),
+					name: string(get("GetCurrentSceneTransition", "transitionName")),
+					duration: get("GetCurrentSceneTransition", "transitionDuration").as_f64(),
 				};
 			}
-			d.profile = string(get("GetProfileList", "currentProfileName").as_ref());
-			d.collection = string(get("GetSceneCollectionList", "currentSceneCollectionName").as_ref());
-			let denominator = get("GetVideoSettings", "fpsDenominator");
-			if truthy(denominator.as_ref()) {
-				d.fps = js::number(get("GetVideoSettings", "fpsNumerator").as_ref()) / js::number(denominator.as_ref());
+			d.profile = string(get("GetProfileList", "currentProfileName"));
+			d.collection = string(get("GetSceneCollectionList", "currentSceneCollectionName"));
+			let numerator = get("GetVideoSettings", "fpsNumerator").as_f64();
+			if let (Some(numerator), Some(denominator)) =
+				(numerator, get("GetVideoSettings", "fpsDenominator").as_f64().filter(|d| *d != 0.0))
+			{
+				d.fps = numerator / denominator;
 			}
 			d.ready = true;
 		}
@@ -265,7 +259,7 @@ impl ObsState {
 	}
 
 	fn on_event(&self, kind: &str, data: &Value) {
-		let s = |key: &str| string(data.get(key));
+		let s = |key: &str| string(&data[key]);
 		match kind {
 			"CurrentProgramSceneChanged" => {
 				{
@@ -289,7 +283,7 @@ impl ObsState {
 				self.on_change.emit(&Change::Preview);
 			}
 			"StudioModeStateChanged" => {
-				let enabled = truthy(data.get("studioModeEnabled"));
+				let enabled = data["studioModeEnabled"] == true;
 				self.data.borrow_mut().studio_mode = enabled;
 				if !enabled {
 					self.data.borrow_mut().preview_scene = None;
@@ -297,8 +291,7 @@ impl ObsState {
 					let reply = self.client.call("GetCurrentPreviewScene", crate::obj! {});
 					spawn_local(async move {
 						if let Ok(r) = reply.await {
-							me.data.borrow_mut().preview_scene =
-								string(r.get("sceneName")).or_else(|| string(r.get("currentPreviewSceneName")));
+							me.data.borrow_mut().preview_scene = string(&r["sceneName"]).or_else(|| string(&r["currentPreviewSceneName"]));
 							me.on_change.emit(&Change::Preview);
 						}
 					});
@@ -327,22 +320,22 @@ impl ObsState {
 			}
 			"RecordStateChanged" => {
 				self.data.borrow_mut().record = Output {
-					active: truthy(data.get("outputActive")),
+					active: data["outputActive"] == true,
 					paused: data.get("outputState").and_then(Value::as_str) == Some("OBS_WEBSOCKET_OUTPUT_PAUSED"),
 					available: false,
 				};
 				self.on_change.emit(&Change::Record);
 			}
 			"StreamStateChanged" => {
-				self.data.borrow_mut().stream = Output { active: truthy(data.get("outputActive")), ..Output::default() };
+				self.data.borrow_mut().stream = Output { active: data["outputActive"] == true, ..Output::default() };
 				self.on_change.emit(&Change::Stream);
 			}
 			"ReplayBufferStateChanged" => {
-				self.data.borrow_mut().replay = Output { active: truthy(data.get("outputActive")), available: true, ..Output::default() };
+				self.data.borrow_mut().replay = Output { active: data["outputActive"] == true, available: true, ..Output::default() };
 				self.on_change.emit(&Change::Replay);
 			}
 			"VirtualcamStateChanged" => {
-				self.data.borrow_mut().virtualcam = Output { active: truthy(data.get("outputActive")), ..Output::default() };
+				self.data.borrow_mut().virtualcam = Output { active: data["outputActive"] == true, ..Output::default() };
 				self.on_change.emit(&Change::Virtualcam);
 			}
 			"CurrentSceneTransitionChanged" => {
@@ -352,7 +345,7 @@ impl ObsState {
 					spawn_local(async move {
 						if let Ok(r) = reply.await {
 							me.data.borrow_mut().transition =
-								Transition { name: string(r.get("transitionName")), duration: number(r.get("transitionDuration")) };
+								Transition { name: string(&r["transitionName"]), duration: r["transitionDuration"].as_f64() };
 							me.on_change.emit(&Change::Transition);
 						}
 					});
@@ -360,7 +353,7 @@ impl ObsState {
 				self.on_change.emit(&Change::Transition);
 			}
 			"CurrentSceneTransitionDurationChanged" => {
-				self.data.borrow_mut().transition.duration = number(data.get("transitionDuration"));
+				self.data.borrow_mut().transition.duration = data["transitionDuration"].as_f64();
 				self.on_change.emit(&Change::Transition);
 			}
 			"CurrentProfileChanged" => {
@@ -379,7 +372,10 @@ impl ObsState {
 				let mut levels = HashMap::new();
 				if let Some(Value::Array(inputs)) = data.get("inputs") {
 					for input in inputs {
-						levels.insert(js::to_string(input.get("inputName")), level_from_meter(input.get("inputLevelsMul")));
+						levels.insert(
+							input["inputName"].as_str().unwrap_or_default().to_string(),
+							level_from_meter(&input["inputLevelsMul"]),
+						);
 					}
 				}
 				*self.levels.borrow_mut() = levels.clone();
@@ -454,7 +450,7 @@ impl ObsState {
 		spawn_local(async move {
 			let Ok(results) = reply.await else { return };
 			let pick = |r: Option<&Value>| match r {
-				Some(r) if truthy(r.get("requestStatus").and_then(|s| s.get("result"))) => r.get("responseData").cloned(),
+				Some(r) if r["requestStatus"]["result"] == true => r.get("responseData").cloned(),
 				_ => None,
 			};
 			let Some(Value::Object(mut stats)) = pick(results.first()) else { return };
@@ -478,11 +474,8 @@ impl ObsState {
 	}
 
 	pub fn bitrate_at(&self, stream: &Value, now: i64) -> Option<f64> {
-		let bytes = match stream.get("outputBytes") {
-			None | Some(Value::Null) => 0.0,
-			b => js::number(b),
-		};
-		let active = truthy(stream.get("outputActive"));
+		let bytes = stream["outputBytes"].as_f64().unwrap_or(0.0);
+		let active = stream["outputActive"] == true;
 		let last = self.last_bytes.get();
 		self.last_bytes.set(if active { Some((bytes, now)) } else { None });
 		let (last_bytes, last_now) = last?;
@@ -493,16 +486,11 @@ impl ObsState {
 	}
 }
 
-fn truthy_value(v: &Value) -> bool {
-	truthy(Some(v))
-}
-
 fn set_scenes(d: &mut crate::obs_state::Data, list: &Value) {
 	// OBS lists scenes bottom first. Keys want the order of the scene dock.
 	d.scenes = sorted_scene_names(list);
-	let current = list.get("currentProgramSceneName");
-	if truthy(current) {
-		d.program_scene = Some(js::to_string(current));
+	if let Some(current) = list["currentProgramSceneName"].as_str().filter(|c| !c.is_empty()) {
+		d.program_scene = Some(current.to_string());
 	}
 }
 
@@ -514,25 +502,19 @@ pub fn sorted_scene_names(list: &Value) -> Vec<String> {
 	};
 	// Stable sort by sceneIndex, highest first.
 	scenes.sort_by(|a, b| {
-		let (a, b) = (js::number(a.get("sceneIndex")), js::number(b.get("sceneIndex")));
+		let (a, b) = (a["sceneIndex"].as_f64().unwrap_or(f64::NAN), b["sceneIndex"].as_f64().unwrap_or(f64::NAN));
 		b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
 	});
-	scenes.iter().map(|s| js::to_string(s.get("sceneName"))).collect()
+	scenes.iter().map(|s| s["sceneName"].as_str().unwrap_or_default().to_string()).collect()
 }
 
 /// OBS sends [magnitude, peak, input peak] per channel as multipliers. Keys show the loudest peak in dB.
-pub fn level_from_meter(channels: Option<&Value>) -> Level {
+pub fn level_from_meter(channels: &Value) -> Level {
 	let mut peak: f64 = 0.0;
 	let mut magnitude: f64 = 0.0;
-	if let Some(Value::Array(channels)) = channels {
-		for channel in channels {
-			let at = |i: usize| match channel.get(i) {
-				None => 0.0,
-				v => js::number(v),
-			};
-			peak = js::max(peak, at(1));
-			magnitude = js::max(magnitude, at(0));
-		}
+	for channel in channels.as_array().into_iter().flatten() {
+		peak = peak.max(channel[1].as_f64().unwrap_or(0.0));
+		magnitude = magnitude.max(channel[0].as_f64().unwrap_or(0.0));
 	}
 	let db = |v: f64| if v > 0.0 { 20.0 * v.log10() } else { f64::NEG_INFINITY };
 	Level { peak: db(peak), magnitude: db(magnitude) }
@@ -545,9 +527,9 @@ mod tests {
 
 	#[test]
 	fn loudest_peak_in_db() {
-		let level = level_from_meter(Some(&json!([[0.1, 0.5, 0.5], [0.2, 0.25, 0.25]])));
+		let level = level_from_meter(&json!([[0.1, 0.5, 0.5], [0.2, 0.25, 0.25]]));
 		assert!((level.peak - 20.0 * 0.5f64.log10()).abs() < 1e-9);
-		assert_eq!(level_from_meter(Some(&json!([]))).peak, f64::NEG_INFINITY);
+		assert_eq!(level_from_meter(&json!([])).peak, f64::NEG_INFINITY);
 	}
 
 	#[test]

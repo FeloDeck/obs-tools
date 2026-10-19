@@ -9,7 +9,7 @@ use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::Res;
 use crate::i18n::{num, t, t_with};
 use crate::icons::colors;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::render::{StatKey, is_color, stat_key};
 use crate::settings::{or, read};
 use crate::time::{format_duration, timecode_seconds};
@@ -99,10 +99,11 @@ impl Behavior for CpuUsage {
 	fn render(&self, k: &KeyRc) {
 		let Some(stats) = k.own::<CpuState>().stats.clone() else { return };
 		let s: CpuSettings = k.settings();
-		let cpu = js::number_or(stats.get("cpuUsage"), 0.0);
+		let cpu = stats["cpuUsage"].as_f64().unwrap_or(0.0);
 		let warn = s.warn_at > 0.0 && cpu >= s.warn_at;
 		let value = format!("{}%", num(cpu, if cpu >= 100.0 { 0 } else { 1 }));
-		let sub = if s.show_memory { format!("{} MB", js::fmt(js::round(js::number(stats.get("memoryUsage"))))) } else { String::new() };
+		let sub =
+			if s.show_memory { format!("{} MB", js::fmt(js::round(stats["memoryUsage"].as_f64().unwrap_or(0.0)))) } else { String::new() };
 		let label = t("OBS CPU");
 		k.set_image(&stat_key(&StatKey {
 			label: &label,
@@ -146,29 +147,22 @@ struct FrameType {
 	read: fn(&Value) -> Frames,
 }
 
-fn n(v: Option<&Value>) -> Option<f64> {
-	match v {
-		None | Some(Value::Null) => None,
-		v => Some(js::number(v)),
-	}
-}
-
 fn frame_type(name: &str) -> &'static FrameType {
 	static DROPPED: FrameType = FrameType {
 		label: "DROPPED",
 		read: |s| {
-			let stream = s.get("stream");
-			if truthy(stream.and_then(|st| st.get("outputActive"))) {
-				Some((n(stream.and_then(|st| st.get("outputSkippedFrames"))), n(stream.and_then(|st| st.get("outputTotalFrames")))))
+			let stream = &s["stream"];
+			if stream["outputActive"] == true {
+				Some((stream["outputSkippedFrames"].as_f64(), stream["outputTotalFrames"].as_f64()))
 			} else {
 				None
 			}
 		},
 	};
 	static SKIPPED: FrameType =
-		FrameType { label: "SKIPPED", read: |s| Some((n(s.get("outputSkippedFrames")), n(s.get("outputTotalFrames")))) };
+		FrameType { label: "SKIPPED", read: |s| Some((s["outputSkippedFrames"].as_f64(), s["outputTotalFrames"].as_f64())) };
 	static MISSED: FrameType =
-		FrameType { label: "MISSED", read: |s| Some((n(s.get("renderSkippedFrames")), n(s.get("renderTotalFrames")))) };
+		FrameType { label: "MISSED", read: |s| Some((s["renderSkippedFrames"].as_f64(), s["renderTotalFrames"].as_f64())) };
 	match name {
 		"skipped" => &SKIPPED,
 		"missed" => &MISSED,
@@ -359,27 +353,23 @@ impl StatsKey for StreamHealth {
 		let settings: HealthSettings = k.settings();
 		let (warn, bad) = (or(settings.warn_drops, 1.0), or(settings.bad_drops, 5.0));
 		{
-			let stream = stats.get("stream");
-			let get = |key: &str| stream.and_then(|s| s.get(key));
+			let stream = &stats["stream"];
+			let number = |key: &str| stream[key].as_f64().unwrap_or(0.0);
 			let mut s = health(k);
-			if !truthy(get("outputActive")) {
+			if stream["outputActive"] != true {
 				s.samples.clear();
 				s.health = None;
 			} else {
 				// Drops of the last 10 seconds, so an old problem does not keep the key red.
-				let or0 = |v: Option<&Value>| match v {
-					None | Some(Value::Null) => 0.0,
-					v => js::number(v),
-				};
-				s.samples.push((or0(get("outputSkippedFrames")), or0(get("outputTotalFrames"))));
+				s.samples.push((number("outputSkippedFrames"), number("outputTotalFrames")));
 				if s.samples.len() > 11 {
 					s.samples.remove(0);
 				}
 				let (first, last) = (s.samples[0], s.samples[s.samples.len() - 1]);
 				let frames = last.1 - first.1;
 				let drops = if frames > 0.0 { ((last.0 - first.0) / frames) * 100.0 } else { 0.0 };
-				let congestion = js::number_or(get("outputCongestion"), 0.0);
-				let reconnecting = truthy(get("outputReconnecting"));
+				let congestion = number("outputCongestion");
+				let reconnecting = stream["outputReconnecting"] == true;
 				let level = if reconnecting || drops >= bad || congestion >= 0.5 {
 					"bad"
 				} else if drops >= warn || congestion >= 0.15 {
@@ -390,8 +380,8 @@ impl StatsKey for StreamHealth {
 				s.health = Some(Health {
 					level,
 					drops: js::max(0.0, drops),
-					kbps: get("kbps").and_then(Value::as_f64),
-					timecode: js::str_or_empty(get("outputTimecode")),
+					kbps: stream["kbps"].as_f64(),
+					timecode: stream["outputTimecode"].as_str().unwrap_or_default().to_string(),
 					reconnecting,
 				});
 			}

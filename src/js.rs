@@ -36,20 +36,9 @@ pub fn number(v: Opt) -> f64 {
 	}
 }
 
-/// `Number(value) || fallback`.
-pub fn number_or(v: Opt, fallback: f64) -> f64 {
-	let n = number(v);
-	if n == 0.0 || n.is_nan() { fallback } else { n }
-}
-
 /// String.prototype.trim.
 pub fn trim(s: &str) -> &str {
 	s.trim_matches(is_js_space)
-}
-
-/// A number as a condition: 0 and NaN are false.
-pub fn truthy_num(x: f64) -> bool {
-	x != 0.0 && !x.is_nan()
 }
 
 pub fn is_js_space(c: char) -> bool {

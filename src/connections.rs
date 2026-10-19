@@ -57,14 +57,13 @@ pub fn read_local_obs_config(paths: &[PathBuf]) -> Option<LocalObs> {
 		let Ok(data) = serde_json::from_str::<Value>(&text) else { continue };
 		let mtime =
 			meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0.0, |d| d.as_secs_f64() * 1000.0);
-		let password = data.get("server_password");
 		let entry = LocalObs {
 			path: file.clone(),
 			mtime,
 			enabled: data.get("server_enabled") != Some(&Value::Bool(false)),
-			port: js::number_or(data.get("server_port"), 4455.0),
+			port: data["server_port"].as_f64().filter(|p| *p != 0.0).unwrap_or(4455.0),
 			auth_required: data.get("auth_required") != Some(&Value::Bool(false)),
-			password: if js::truthy(password) { js::to_string(password) } else { String::new() },
+			password: data["server_password"].as_str().unwrap_or_default().to_string(),
 		};
 		if best.as_ref().is_none_or(|b| entry.mtime > b.mtime) {
 			best = Some(entry);

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{Behavior, KeyRc, Kind, Press, Stop, defaults};
 use crate::i18n::t;
 use crate::icons::colors;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::media::{PlayOptions, Playback, play_media, wait_for_event};
 use crate::obs_state::Output;
 use crate::render::{GlyphKey, glyph_key};
@@ -72,10 +72,10 @@ impl OutputToggle {
 			return Ok(());
 		}
 		let status = k.call(self.0.status_request, json!({})).await?;
-		out(k).time = if truthy(status.get("outputPaused")) {
+		out(k).time = if status["outputPaused"] == true {
 			t("Paused")
 		} else {
-			format_duration(timecode_seconds(&js::str_or_empty(status.get("outputTimecode"))))
+			format_duration(timecode_seconds(status["outputTimecode"].as_str().unwrap_or_default()))
 		};
 		if self.active(k) {
 			self.render(k);
@@ -204,7 +204,7 @@ impl Behavior for VirtualCam {
 			}
 			let Some(client) = k.obs() else { return Err("no connection".into()) };
 			let started =
-				wait_for_event(&client, "VirtualcamStateChanged", if loaded { 5000.0 } else { 60000.0 }, |d| truthy(d.get("outputActive")));
+				wait_for_event(&client, "VirtualcamStateChanged", if loaded { 5000.0 } else { 60000.0 }, |d| d["outputActive"] == true);
 			k.call("StartVirtualCam", json!({})).await?;
 			if started.await.is_err() {
 				return Err(if loaded {
@@ -301,7 +301,7 @@ async fn replay_inner(k: &KeyRc) -> Res<()> {
 			Ok(data) => data.get("savedReplayPath").cloned(),
 			Err(_) => k.call("GetLastReplayBufferReplay", json!({})).await?.get("savedReplayPath").cloned(),
 		};
-		k.log(&format!("replay saved: {}", js::to_string(path.as_ref())));
+		k.log(&format!("replay saved: {}", path.as_ref().and_then(Value::as_str).unwrap_or_default()));
 		if let Some(path) = path.as_ref().and_then(Value::as_str).filter(|p| !p.is_empty())
 			&& s.auto_replay
 			&& !s.media_input.is_empty()

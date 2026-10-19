@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use super::{Behavior, KeyRc, Kind, Press, Stop, defaults, same_name};
 use crate::Res;
 use crate::icons::{colors, media_glyph};
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs_state::Change;
 use crate::render::{GlyphKey, glyph_key};
 use crate::settings;
@@ -55,7 +55,7 @@ async fn load_visibility(k: &KeyRc) {
 		let id = item.get("sceneItemId").cloned().unwrap_or(Value::Null);
 		vis(k).item_id = Some(id.clone());
 		let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": id })).await?;
-		vis(k).enabled = truthy(enabled.get("sceneItemEnabled"));
+		vis(k).enabled = enabled["sceneItemEnabled"] == true;
 		Ok(())
 	}
 	.await;
@@ -94,7 +94,7 @@ impl Behavior for SourceVisibility {
 			&& same_scene
 			&& vis(k).item_id.as_ref().is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, id)))
 		{
-			vis(k).enabled = truthy(data.get("sceneItemEnabled"));
+			vis(k).enabled = data["sceneItemEnabled"] == true;
 			self.render(k);
 		} else if (kind == "SceneItemCreated" || kind == "SceneItemRemoved") && same_scene {
 			let k = k.clone();
@@ -232,7 +232,7 @@ impl Behavior for Screenshot {
 		let s: ScreenshotSettings = k.settings();
 		let source = scene_or_live(k, &s.source);
 		let dir = if s.folder.is_empty() {
-			js::to_string(k.call("GetRecordDirectory", json!({})).await?.get("recordDirectory"))
+			k.call("GetRecordDirectory", json!({})).await?["recordDirectory"].as_str().unwrap_or_default().to_string()
 		} else {
 			s.folder
 		};
@@ -437,12 +437,11 @@ impl Behavior for MediaControl {
 		let show_time = s.show_time && !s.input.is_empty();
 		let status = media(k).status.clone();
 		let field = |name: &str| status.as_ref().and_then(|s| s.get(name)).cloned();
-		let cursor = field("mediaCursor").filter(|c| !c.is_null());
-		let duration = js::number(field("mediaDuration").as_ref());
+		let cursor = field("mediaCursor").and_then(|c| c.as_f64());
+		let duration = field("mediaDuration").and_then(|d| d.as_f64()).unwrap_or(0.0);
 		let mut time = String::new();
 		// Time played works without a length too, like for a stream as source.
-		if let Some(cursor) = &cursor {
-			let cursor = js::number(Some(cursor));
+		if let Some(cursor) = cursor {
 			if s.time_shows == "played" {
 				time = format_duration(cursor / 1000.0);
 			} else if duration > 0.0 {
@@ -453,7 +452,7 @@ impl Behavior for MediaControl {
 		let title = if show_time && (media_playing(k) || paused) { time } else { String::new() };
 		// The time goes above or below the glyph, so the key draws it into the image.
 		k.own_title(&title);
-		let color = if status.as_ref().is_some_and(|s| truthy(Some(s))) { colors::WHITE } else { colors::GRAY };
+		let color = if status.is_some() { colors::WHITE } else { colors::GRAY };
 		k.set_image(&glyph_key(
 			media_glyph_name(k, &s.operation),
 			&GlyphKey { title: &title, title_at: &s.time_at, color, ..Default::default() },

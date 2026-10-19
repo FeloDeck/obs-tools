@@ -5,13 +5,14 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, LazyLock};
 
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, spawn_local};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::emitter::Emitter;
-use crate::js::{self, truthy};
+use crate::js;
 use crate::timers::{Timer, set_timeout, sleep};
 use crate::{Error, Res};
 
@@ -150,6 +151,49 @@ pub struct ChatMessage {
 	pub channel: String,
 }
 
+/// The Twitch login, kept in the global settings as "twitch".
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+struct Config {
+	/// Whose chat to read and where clips go. Empty: the logged in user.
+	channel: String,
+	token: String,
+	refresh_token: String,
+	client_id: String,
+	login: String,
+	user_id: String,
+	scopes: Value,
+}
+
+impl Config {
+	/// After Twitch accepted a token. data: what Twitch said about it.
+	fn logged_in(&self, token: String, refresh_token: &str, client_id: &str, data: &Value) -> Config {
+		let text = |key: &str| data[key].as_str().unwrap_or_default().to_string();
+		let login = text("login");
+		Config {
+			channel: if self.channel.is_empty() { login.clone() } else { self.channel.clone() },
+			token,
+			refresh_token: refresh_token.to_string(),
+			client_id: Some(text("client_id")).filter(|c| !c.is_empty()).unwrap_or_else(|| client_id.to_string()),
+			login,
+			user_id: text("user_id"),
+			scopes: if data["scopes"].is_array() { data["scopes"].clone() } else { json!([]) },
+		}
+	}
+
+	/// After a refresh. data: the new tokens.
+	fn refreshed(&self, data: &Value) -> Option<Config> {
+		let token = data["access_token"].as_str().filter(|t| !t.is_empty())?;
+		let refresh_token = data["refresh_token"].as_str().filter(|t| !t.is_empty()).unwrap_or(&self.refresh_token);
+		Some(Config { token: token.to_string(), refresh_token: refresh_token.to_string(), ..self.clone() })
+	}
+
+	/// The channel to use: the one set, or the logged in user.
+	fn channel(&self) -> String {
+		normalize_channel(if self.channel.is_empty() { &self.login } else { &self.channel })
+	}
+}
+
 #[derive(Clone)]
 struct DeviceFlow {
 	id: u64,
@@ -170,7 +214,7 @@ struct ChatSocket {
 pub struct Twitch {
 	save: Box<dyn Fn(Map<String, Value>)>,
 	log: Box<dyn Fn(&str)>,
-	config: RefCell<Map<String, Value>>,
+	config: RefCell<Config>,
 	chat_wanted: Cell<bool>,
 	ws: RefCell<Option<ChatSocket>>,
 	chat_channel: RefCell<Option<String>>,
@@ -298,7 +342,7 @@ impl Twitch {
 		Rc::new_cyclic(|me| Twitch {
 			save: Box::new(save),
 			log: Box::new(log),
-			config: RefCell::new(Map::new()),
+			config: RefCell::new(Config::default()),
 			chat_wanted: Cell::new(false),
 			ws: RefCell::new(None),
 			chat_channel: RefCell::new(None),
@@ -313,34 +357,35 @@ impl Twitch {
 		})
 	}
 
-	fn get(&self, key: &str) -> Option<Value> {
-		self.config.borrow().get(key).cloned()
+	fn config(&self) -> Config {
+		self.config.borrow().clone()
 	}
 
-	fn get_str(&self, key: &str) -> String {
-		js::str_or_empty(self.get(key).as_ref())
+	/// Keeps the config and saves it in the global settings.
+	fn save_config(&self, config: Config) {
+		*self.config.borrow_mut() = config.clone();
+		if let Ok(Value::Object(map)) = serde_json::to_value(config) {
+			(self.save)(map);
+		}
 	}
 
 	pub fn configure(&self, config: Option<&Value>) {
-		*self.config.borrow_mut() = js::object(config);
+		*self.config.borrow_mut() = crate::settings::read_value(config.unwrap_or(&Value::Null));
 		self.update_chat();
 	}
 
 	pub fn channel(&self) -> String {
-		let channel = self.get("channel");
-		let pick = if truthy(channel.as_ref()) { channel } else { self.get("login") };
-		normalize_channel(&js::str_or_empty(pick.as_ref()))
+		self.config.borrow().channel()
 	}
 
 	pub fn status(&self) -> Value {
-		let login = self.get("login");
-		let scopes = self.get("scopes");
+		let c = self.config();
 		let flow = self.device_flow.borrow().as_ref().map(|f| crate::obj! { "userCode" => f.user_code.clone(), "uri" => f.uri.clone() });
 		crate::obj! {
-			"channel" => self.channel(),
-			"login" => if truthy(login.as_ref()) { login.unwrap_or(Value::Null) } else { Value::from("") },
-			"authorized" => truthy(self.get("token").as_ref()),
-			"scopes" => if truthy(scopes.as_ref()) { scopes.unwrap_or(Value::Null) } else { Value::Array(Vec::new()) },
+			"channel" => c.channel(),
+			"login" => c.login,
+			"authorized" => !c.token.is_empty(),
+			"scopes" => if c.scopes.is_null() { json!([]) } else { c.scopes },
 			"chatConnected" => self.chat_connected.get(),
 			"chatWanted" => self.chat_wanted.get(),
 			"deviceFlow" => flow.unwrap_or(Value::Null),
@@ -460,15 +505,14 @@ impl Twitch {
 		}
 		let id = self.next_id.get();
 		self.next_id.set(id + 1);
-		let interval = js::number(data.get("interval"));
 		let flow = DeviceFlow {
 			id,
 			client_id,
-			device_code: js::to_string(data.get("device_code")),
-			user_code: data.get("user_code").cloned().unwrap_or(Value::Null),
-			uri: data.get("verification_uri").cloned().unwrap_or(Value::Null),
-			expires: js::now() as f64 + js::number(data.get("expires_in")) * 1000.0,
-			interval: js::max(1.0, if js::truthy_num(interval) { interval } else { 5.0 }) * 1000.0,
+			device_code: data["device_code"].as_str().unwrap_or_default().to_string(),
+			user_code: data["user_code"].clone(),
+			uri: data["verification_uri"].clone(),
+			expires: js::now() as f64 + data["expires_in"].as_f64().unwrap_or(0.0) * 1000.0,
+			interval: data["interval"].as_f64().filter(|i| *i > 0.0).unwrap_or(5.0).max(1.0) * 1000.0,
 		};
 		*self.device_flow.borrow_mut() = Some(flow.clone());
 		self.on_status.emit(&());
@@ -504,17 +548,16 @@ impl Twitch {
 				)
 				.await?;
 				let data = response.json()?;
-				if response.ok() && truthy(data.get("access_token")) {
+				let text = |key: &str| data[key].as_str().unwrap_or_default();
+				if response.ok() && !text("access_token").is_empty() {
 					*self.device_flow.borrow_mut() = None;
-					let refresh = js::str_or_empty(data.get("refresh_token"));
-					self.use_token(&js::str_or_empty(data.get("access_token")), &refresh, &flow.client_id).await?;
+					self.use_token(text("access_token"), text("refresh_token"), &flow.client_id).await?;
 					return Ok(true);
 				}
-				let message = data.get("message");
-				if truthy(message) && !matches!(message.and_then(Value::as_str), Some("authorization_pending" | "slow_down")) {
-					return Err(js::to_string(message).into());
+				match text("message") {
+					"" | "authorization_pending" | "slow_down" => Ok(false),
+					message => Err(message.into()),
 				}
-				Ok(false)
 			}
 			.await;
 			match result {
@@ -548,54 +591,25 @@ impl Twitch {
 			fetch("GET", "https://id.twitch.tv/oauth2/validate".into(), vec![("Authorization", format!("OAuth {token}"))], None).await?;
 		let data = response.json_or_empty();
 		if !response.ok() {
-			let message = data.get("message");
-			return Err(if truthy(message) { js::to_string(message) } else { "Twitch did not accept the token".into() }.into());
+			return Err(match data["message"].as_str() {
+				Some(message) if !message.is_empty() => message.into(),
+				_ => "Twitch did not accept the token".into(),
+			});
 		}
-		{
-			let mut config = self.config.borrow_mut();
-			let channel = config.get("channel").cloned();
-			let pick = |key: &str, fallback: Value| match data.get(key) {
-				Some(v) if truthy(Some(v)) => v.clone(),
-				_ => fallback,
-			};
-			config.insert("token".into(), token.into());
-			config.insert("refreshToken".into(), refresh_token.into());
-			config.insert("clientId".into(), pick("client_id", client_id.into()));
-			// login and user_id may be missing. Then the config has no such key either.
-			for (key, from) in [("login", "login"), ("userId", "user_id")] {
-				match data.get(from) {
-					Some(v) => config.insert(key.into(), v.clone()),
-					None => config.remove(key),
-				};
-			}
-			config.insert("scopes".into(), pick("scopes", Value::Array(Vec::new())));
-			let channel = match channel {
-				Some(c) if truthy(Some(&c)) => Some(c),
-				_ => data.get("login").cloned(),
-			};
-			match channel {
-				Some(c) => config.insert("channel".into(), c),
-				None => config.remove("channel"),
-			};
-		}
-		let config = self.config.borrow().clone();
-		(self.save)(config);
+		self.save_config(self.config().logged_in(token, refresh_token, client_id, &data));
 		self.update_chat();
 		self.on_status.emit(&());
 		Ok(self.status())
 	}
 
+	/// Forgets the login, keeps the channel.
 	pub fn logout(&self) {
-		let channel = self.get("channel").filter(|c| truthy(Some(c))).unwrap_or_else(|| Value::from(""));
-		let mut config = Map::new();
-		config.insert("channel".into(), channel);
-		*self.config.borrow_mut() = config.clone();
-		(self.save)(config);
+		self.save_config(Config { channel: self.config().channel, ..Config::default() });
 		self.on_status.emit(&());
 	}
 
 	async fn refresh(&self) -> bool {
-		let (refresh_token, client_id) = (self.get_str("refreshToken"), self.get_str("clientId"));
+		let Config { refresh_token, client_id, .. } = self.config();
 		if refresh_token.is_empty() || client_id.is_empty() {
 			return false;
 		}
@@ -610,27 +624,17 @@ impl Twitch {
 		else {
 			return false;
 		};
-		let data = response.json_or_empty();
-		if !response.ok() || !truthy(data.get("access_token")) {
-			return false;
-		}
-		{
-			let mut config = self.config.borrow_mut();
-			config.insert("token".into(), data["access_token"].clone());
-			if truthy(data.get("refresh_token")) {
-				config.insert("refreshToken".into(), data["refresh_token"].clone());
-			}
-		}
-		let config = self.config.borrow().clone();
-		(self.save)(config);
+		let refreshed = if response.ok() { self.config().refreshed(&response.json_or_empty()) } else { None };
+		let Some(config) = refreshed else { return false };
+		self.save_config(config);
 		true
 	}
 
 	async fn helix(&self, method: &'static str, path: &str, query: &[(&str, &str)], body: Option<Value>) -> Res<Value> {
 		let mut retry = true;
 		loop {
-			let token = self.get("token");
-			if !truthy(token.as_ref()) {
+			let Config { token, client_id, .. } = self.config();
+			if token.is_empty() {
 				return Err("Log in to Twitch in the Instant Replay settings first".into());
 			}
 			let mut url = format!("https://api.twitch.tv/helix/{path}");
@@ -638,10 +642,7 @@ impl Twitch {
 				url.push('?');
 				url.push_str(&form(query));
 			}
-			let headers = vec![
-				("Authorization", format!("Bearer {}", js::to_string(token.as_ref()))),
-				("Client-Id", js::to_string(self.get("clientId").as_ref())),
-			];
+			let headers = vec![("Authorization", format!("Bearer {token}")), ("Client-Id", client_id)];
 			let response = fetch(method, url, headers, body.as_ref().map(|b| ("application/json", js::stringify(b)))).await?;
 			if response.status == 401 && retry && self.refresh().await {
 				retry = false;
@@ -655,53 +656,57 @@ impl Twitch {
 		}
 	}
 
-	async fn broadcaster_id(&self) -> Res<Value> {
-		let channel = self.channel();
+	async fn broadcaster_id(&self) -> Res<String> {
+		let config = self.config();
+		let channel = config.channel();
 		if channel.is_empty() {
 			return Err("No Twitch channel set".into());
 		}
-		if channel == self.get_str("login") && truthy(self.get("userId").as_ref()) {
-			return Ok(self.get("userId").unwrap_or(Value::Null));
+		if channel == config.login && !config.user_id.is_empty() {
+			return Ok(config.user_id);
 		}
 		let data = self.helix("GET", "users", &[("login", &channel)], None).await?;
-		match data.get("data").and_then(|d| d.get(0)) {
-			Some(user) if truthy(Some(user)) => Ok(user.get("id").cloned().unwrap_or(Value::Null)),
-			_ => Err(format!("Twitch channel {channel} not found").into()),
+		match data["data"][0]["id"].as_str() {
+			Some(id) => Ok(id.to_string()),
+			None => Err(format!("Twitch channel {channel} not found").into()),
 		}
 	}
 
 	/// Clips only work while the channel is live. Returns the URL of the clip.
 	pub async fn create_clip(&self) -> Res<String> {
-		let id = js::to_string(Some(&self.broadcaster_id().await?));
+		let id = self.broadcaster_id().await?;
 		let data = self.helix("POST", "clips", &[("broadcaster_id", &id)], None).await?;
-		match data.get("data").and_then(|d| d.get(0)) {
-			Some(clip) if truthy(Some(clip)) => Ok(format!("https://clips.twitch.tv/{}", js::to_string(clip.get("id")))),
-			_ => Err("Twitch did not create a clip".into()),
+		match data["data"][0]["id"].as_str() {
+			Some(clip) => Ok(format!("https://clips.twitch.tv/{clip}")),
+			None => Err("Twitch did not create a clip".into()),
 		}
 	}
 
 	pub async fn say(&self, message: &str) -> Res<()> {
-		let id = self.broadcaster_id().await?;
 		let mut body = Map::new();
-		body.insert("broadcaster_id".into(), id);
-		if let Some(user) = self.get("userId") {
-			body.insert("sender_id".into(), user);
+		body.insert("broadcaster_id".into(), self.broadcaster_id().await?.into());
+		let user = self.config().user_id;
+		if !user.is_empty() {
+			body.insert("sender_id".into(), user.into());
 		}
 		body.insert("message".into(), message.into());
 		let data = self.helix("POST", "chat/messages", &[], Some(Value::Object(body))).await?;
-		if let Some(result) = data.get("data").and_then(|d| d.get(0)).filter(|r| truthy(Some(r)))
-			&& result.get("is_sent") == Some(&Value::Bool(false))
-		{
-			let reason = result.get("drop_reason").and_then(|r| r.get("message"));
-			return Err(if truthy(reason) { js::to_string(reason) } else { "Twitch dropped the message".into() }.into());
+		let result = &data["data"][0];
+		if result["is_sent"] == false {
+			return Err(match result["drop_reason"]["message"].as_str() {
+				Some(reason) if !reason.is_empty() => reason.into(),
+				_ => "Twitch dropped the message".into(),
+			});
 		}
 		Ok(())
 	}
 }
 
 fn twitch_error(data: &Value, status: u16) -> Error {
-	let message = data.get("message");
-	if truthy(message) { js::to_string(message).into() } else { format!("Twitch said {status}").into() }
+	match data["message"].as_str() {
+		Some(message) if !message.is_empty() => message.into(),
+		_ => format!("Twitch said {status}").into(),
+	}
 }
 
 async fn run_chat(
@@ -778,6 +783,42 @@ mod tests {
 		assert!(is_allowed(&ChatUser { broadcaster: true, ..Default::default() }, "mods"));
 		assert_eq!(normalize_channel("https://www.twitch.tv/SomeOne/videos"), "someone");
 		assert_eq!(normalize_channel("#Chan "), "chan");
+	}
+
+	#[test]
+	fn a_login_keeps_the_channel_and_takes_the_rest_from_twitch() {
+		let before = Config { channel: "Mine".into(), token: "old".into(), ..Config::default() };
+		let data = json!({ "client_id": "cid", "login": "someone", "user_id": "42", "scopes": ["clips:edit"] });
+		let after = before.logged_in("tok".into(), "ref", "typed", &data);
+		assert_eq!(
+			after,
+			Config {
+				channel: "Mine".into(),
+				token: "tok".into(),
+				refresh_token: "ref".into(),
+				client_id: "cid".into(),
+				login: "someone".into(),
+				user_id: "42".into(),
+				scopes: json!(["clips:edit"]),
+			}
+		);
+		// Without a channel the login is the channel. Without a client_id the typed one stays.
+		let after = Config::default().logged_in("tok".into(), "", "typed", &json!({ "login": "someone" }));
+		assert_eq!((after.channel.as_str(), after.client_id.as_str(), &after.scopes), ("someone", "typed", &json!([])));
+		assert_eq!(after.channel(), "someone");
+		// The config round-trips through the global settings.
+		let saved = serde_json::to_value(&after).unwrap_or_default();
+		assert_eq!(crate::settings::read_value::<Config>(&saved), after);
+	}
+
+	#[test]
+	fn a_refresh_needs_a_new_token() {
+		let before = Config { token: "old".into(), refresh_token: "r1".into(), ..Config::default() };
+		assert_eq!(before.refreshed(&json!({ "refresh_token": "r2" })), None);
+		let after = before.refreshed(&json!({ "access_token": "new" })).unwrap_or_default();
+		assert_eq!((after.token.as_str(), after.refresh_token.as_str()), ("new", "r1"));
+		let after = before.refreshed(&json!({ "access_token": "new", "refresh_token": "r2" })).unwrap_or_default();
+		assert_eq!(after.refresh_token, "r2");
 	}
 
 	#[test]

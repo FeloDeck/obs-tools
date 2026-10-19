@@ -8,7 +8,7 @@ use super::{Behavior, KeyRc, Kind, PiReply, Press, defaults, patch, same_name};
 use crate::Res;
 use crate::animation::{self, Run, diff_transforms, normalize_phase, run_animation, total_duration};
 use crate::desktop::{active_x11_window, session_type, xcomposite_window_value};
-use crate::js::{self, truthy};
+use crate::js;
 use crate::media::{PlayOptions, Playback, play_media};
 use crate::settings::or;
 use crate::timers::Timer;
@@ -410,7 +410,7 @@ impl Behavior for ImageSource {
 		let mine = image(k).item_id.clone();
 		let hidden = kind == "SceneItemEnableStateChanged"
 			&& mine.is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, &id)))
-			&& !truthy(data.get("sceneItemEnabled"));
+			&& data["sceneItemEnabled"] != true;
 		let other_file = kind == "InputSettingsChanged"
 			&& same_name(data, "inputName", &s.input)
 			&& data.get("inputSettings").and_then(|i| i.get("file")).and_then(Value::as_str) != Some(s.file.as_str());
@@ -438,8 +438,7 @@ impl Behavior for ImageSource {
 		let item = scene_item(k, scene.as_deref(), &s.input).await?;
 		let scene = scene.unwrap_or_default();
 		image(k).item_id = Some(item.clone());
-		let enabled =
-			truthy(k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemEnabled"));
+		let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?["sceneItemEnabled"] == true;
 		let settings = k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
 		let current = settings.get("inputSettings").and_then(|i| i.get("file")).and_then(Value::as_str);
 		let mine = enabled && (s.file.is_empty() || current == Some(s.file.as_str()));
@@ -550,9 +549,8 @@ impl Behavior for BrowserSource {
 			"visibility" => {
 				let scene = k.data().program_scene;
 				let item = scene_item(k, scene.as_deref(), &s.input).await?;
-				let enabled = truthy(
-					k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemEnabled"),
-				);
+				let enabled =
+					k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?["sceneItemEnabled"] == true;
 				k.call("SetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item, "sceneItemEnabled": !enabled })).await?;
 			}
 			_ => {}
@@ -601,7 +599,7 @@ async fn load_filter(k: &KeyRc) {
 		return;
 	}
 	let enabled = match k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await {
-		Ok(r) => truthy(r.get("filterEnabled")),
+		Ok(r) => r["filterEnabled"] == true,
 		Err(_) => false,
 	};
 	k.own::<FilterState>().enabled = enabled;
@@ -626,7 +624,7 @@ impl Behavior for FilterToggle {
 		let s: FilterSettings = k.settings();
 		if kind == "SourceFilterEnableStateChanged" && same_name(data, "sourceName", &s.source) && same_name(data, "filterName", &s.filter)
 		{
-			k.own::<FilterState>().enabled = truthy(data.get("filterEnabled"));
+			k.own::<FilterState>().enabled = data["filterEnabled"] == true;
 			self.render(k);
 		}
 		Ok(())
@@ -647,7 +645,7 @@ impl Behavior for FilterToggle {
 		let enabled = match press.op.as_str() {
 			"enable" => true,
 			"disable" => false,
-			_ => !truthy(k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await?.get("filterEnabled")),
+			_ => k.call("GetSourceFilter", json!({ "sourceName": s.source, "filterName": s.filter })).await?["filterEnabled"] != true,
 		};
 		k.call("SetSourceFilterEnabled", json!({ "sourceName": s.source, "filterName": s.filter, "filterEnabled": enabled })).await?;
 		k.own::<FilterState>().enabled = enabled;

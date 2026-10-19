@@ -1,11 +1,13 @@
 // Lists for the drop downs of the settings pages: scenes, sources, filters, hotkeys and more.
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::actions::KeyRc;
 use crate::actions::dials::{filter_range, filter_value_label};
-use crate::js::{self, truthy};
+use crate::js;
 use crate::obs::ObsClient;
 use crate::obs_state::sorted_scene_names;
+use crate::settings;
 
 const AUDIO_CAP: i64 = 1 << 1;
 const MEDIA_KINDS: &[&str] = &["ffmpeg_source", "vlc_source"];
@@ -25,8 +27,25 @@ const AUDIO_KINDS: &[&str] = &[
 	"browser_source",
 ];
 
+/// What some lists need to know, from the settings page.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ListArgs {
+	/// filters, filterSettings
+	source: String,
+	/// filterSettings
+	filter: String,
+	/// sceneItems. Empty: the live scene.
+	scene: String,
+}
+
+fn kind_of(input: &Value) -> &str {
+	input["unversionedInputKind"].as_str().unwrap_or_default()
+}
+
 /// The lists asked for, read from the OBS this key talks to.
 pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) -> Value {
+	let args: ListArgs = settings::read_value(payload);
 	let mut out = Map::new();
 	let Some(client) = instance.and_then(|i| i.obs()) else { return Value::Object(out) };
 	if !client.connected() {
@@ -48,7 +67,6 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 		inputs.clone().unwrap_or_default()
 	}
 	let field = |items: &[Value], key: &str| items.iter().map(|i| i.get(key).cloned().unwrap_or(Value::Null)).collect::<Vec<_>>();
-	let kind_of = |i: &Value| js::to_string(i.get("unversionedInputKind"));
 	let array = |list: Option<Value>, key: &str| match list.as_ref().and_then(|l| l.get(key)) {
 		Some(Value::Array(items)) => items.clone(),
 		_ => Vec::new(),
@@ -65,8 +83,8 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 					.await
 					.into_iter()
 					.filter(|i| match i.get("inputKindCaps") {
-						Some(caps) => js::number(Some(caps)) as i64 & AUDIO_CAP != 0,
-						None => AUDIO_KINDS.contains(&kind_of(i).as_str()),
+						Some(caps) => caps.as_i64().unwrap_or(0) & AUDIO_CAP != 0,
+						None => AUDIO_KINDS.contains(&kind_of(i)),
 					})
 					.collect();
 				Value::from(field(&items, "inputName"))
@@ -79,7 +97,7 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 					"windowInputs" => kind == "xcomposite_input",
 					_ => kind.starts_with("text_"),
 				};
-				let items: Vec<Value> = get_inputs(&client, &mut inputs).await.into_iter().filter(|i| wanted(&kind_of(i))).collect();
+				let items: Vec<Value> = get_inputs(&client, &mut inputs).await.into_iter().filter(|i| wanted(kind_of(i))).collect();
 				Value::from(field(&items, "inputName"))
 			}
 			"sources" => {
@@ -91,9 +109,11 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 			}
 			"transitions" => Value::from(field(&array(call("GetSceneTransitionList", json!({})).await, "transitions"), "transitionName")),
 			"filters" => {
-				let source = payload.get("source").cloned().unwrap_or(Value::Null);
-				if truthy(Some(&source)) {
-					Value::from(field(&array(call("GetSourceFilterList", json!({ "sourceName": source })).await, "filters"), "filterName"))
+				if !args.source.is_empty() {
+					Value::from(field(
+						&array(call("GetSourceFilterList", json!({ "sourceName": args.source })).await, "filters"),
+						"filterName",
+					))
 				} else {
 					Value::from(Vec::<Value>::new())
 				}
@@ -107,19 +127,20 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 						names.push(hotkey);
 					}
 				}
-				let mut entries: Vec<(String, Value)> = names.into_iter().map(|v| (hotkey_label(&js::to_string(Some(&v))), v)).collect();
+				let mut entries: Vec<(String, Value)> =
+					names.into_iter().map(|v| (hotkey_label(v.as_str().unwrap_or_default()), v)).collect();
 				entries.sort_by(|a, b| locale_compare(&a.0, &b.0));
 				Value::from(entries.into_iter().map(|(label, value)| json!({ "value": value, "label": label })).collect::<Vec<_>>())
 			}
-			"filterSettings" => filter_settings(&client, payload.get("source"), payload.get("filter")).await,
+			"filterSettings" => filter_settings(&client, &args.source, &args.filter).await,
 			"sceneItems" => {
-				let scene = payload
-					.get("scene")
-					.filter(|s| truthy(Some(s)))
-					.cloned()
-					.or_else(|| instance.and_then(|i| i.obs_state()).and_then(|s| s.data().program_scene).map(Value::from));
+				let scene = if args.scene.is_empty() {
+					instance.and_then(|i| i.obs_state()).and_then(|s| s.data().program_scene)
+				} else {
+					Some(args.scene.clone())
+				};
 				match scene {
-					Some(scene) if truthy(Some(&scene)) => Value::from(field(
+					Some(scene) if !scene.is_empty() => Value::from(field(
 						&array(call("GetSceneItemList", json!({ "sceneName": scene })).await, "sceneItems"),
 						"sourceName",
 					)),
@@ -134,28 +155,23 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 }
 
 // The number settings of a filter, for the filter dial.
-async fn filter_settings(client: &ObsClient, source: Option<&Value>, filter: Option<&Value>) -> Value {
+async fn filter_settings(client: &ObsClient, source: &str, filter: &str) -> Value {
 	let empty = Value::Array(Vec::new());
-	if !truthy(source) || !truthy(filter) {
+	if source.is_empty() || filter.is_empty() {
 		return empty;
 	}
 	let Ok(found) = client.call("GetSourceFilter", json!({ "sourceName": source, "filterName": filter })).await else { return empty };
-	let kind = found.get("filterKind").cloned().unwrap_or(Value::Null);
-	let defaults = client
-		.call("GetSourceFilterDefaultSettings", json!({ "filterKind": kind }))
-		.await
-		.ok()
-		.and_then(|d| d.get("defaultFilterSettings").cloned());
-	let mut all = js::object(defaults.as_ref());
-	js::assign(&mut all, &js::object(found.get("filterSettings")));
+	let kind = found["filterKind"].as_str().unwrap_or_default();
+	let defaults = client.call("GetSourceFilterDefaultSettings", json!({ "filterKind": kind })).await.unwrap_or_default();
+	let object = |v: &Value| v.as_object().cloned().unwrap_or_default();
+	let mut all = object(&defaults["defaultFilterSettings"]);
+	all.extend(object(&found["filterSettings"]));
 	let mut keys: Vec<&String> = all.iter().filter(|(k, v)| v.is_number() && !k.starts_with("color")).map(|(k, _)| k).collect();
 	keys.sort();
-	let kind = js::str_or_empty(Some(&kind));
 	Value::from(
 		keys.into_iter()
 			.map(|key| {
-				let range =
-					filter_range(&kind, key).map_or(Value::Null, |r| Value::from(r.iter().map(|x| js::num(*x)).collect::<Vec<_>>()));
+				let range = filter_range(kind, key).map_or(Value::Null, |r| Value::from(r.iter().map(|x| js::num(*x)).collect::<Vec<_>>()));
 				json!({ "value": key, "label": filter_value_label(key), "range": range })
 			})
 			.collect::<Vec<_>>(),
@@ -178,7 +194,7 @@ pub fn hotkey_label(name: &str) -> String {
 		spaced.push(c);
 		prev = Some(c);
 	}
-	let words = js::trim(&spaced.replace(['_', '.'], " ").to_lowercase()).to_string();
+	let words = spaced.replace(['_', '.'], " ").to_lowercase().trim().to_string();
 	let mut chars = words.chars();
 	let label = match chars.next() {
 		Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
