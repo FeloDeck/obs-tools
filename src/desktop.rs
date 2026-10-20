@@ -1,4 +1,4 @@
-// Small desktop helpers: a native file picker and the focused X11 window.
+// Small desktop helpers: native file and folder pickers, and the focused window.
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -61,84 +61,137 @@ fn some_path(text: &str) -> Option<String> {
 	if text.is_empty() { None } else { Some(text.to_string()) }
 }
 
-const IMAGE_PATTERNS: &[&str] = &["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.tga", "*.psd"];
-const VIDEO_PATTERNS: &[&str] =
-	&["*.mp4", "*.mkv", "*.mov", "*.webm", "*.flv", "*.avi", "*.ts", "*.m4v", "*.gif", "*.mp3", "*.wav", "*.ogg", "*.flac"];
+#[cfg(not(target_os = "macos"))]
+mod linux_dialogs {
+	pub const IMAGE_PATTERNS: &[&str] = &["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.tga", "*.psd"];
+	pub const VIDEO_PATTERNS: &[&str] =
+		&["*.mp4", "*.mkv", "*.mov", "*.webm", "*.flv", "*.avi", "*.ts", "*.m4v", "*.gif", "*.mp3", "*.wav", "*.ogg", "*.flac"];
+}
 
 /// Opens a file dialog. The path, or None when the user cancels.
 pub async fn pick_file(title: &str, start: &str, images: bool) -> Res<Option<String>> {
-	let patterns = if images { IMAGE_PATTERNS } else { VIDEO_PATTERNS }.join(" ");
-	let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
-	let kind = if images { "Pictures" } else { "Media files" };
-	let begin = if start.is_empty() { dir.clone() } else { start.to_string() };
-	let kdialog = run(
-		"kdialog",
-		&["--title".into(), title.into(), "--getopenfilename".into(), begin, format!("{kind} ({patterns})|All files (*)")],
-		0,
-	)
-	.await;
-	if kdialog.ok {
-		return Ok(some_path(&kdialog.stdout));
-	}
-	if !kdialog.missing {
-		return Ok(None);
-	}
-	for tool in ["zenity", "qarma"] {
-		let file = if start.is_empty() { format!("{dir}/") } else { start.to_string() };
-		let args = vec![
-			"--file-selection".into(),
-			format!("--title={title}"),
-			format!("--filename={file}"),
-			format!("--file-filter={kind} | {patterns}"),
-			"--file-filter=All files | *".into(),
-		];
-		let result = run(tool, &args, 0).await;
+	#[cfg(target_os = "macos")]
+	{
+		let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
+		let dir = if Path::new(&dir).is_dir() { dir } else { home() };
+		let script = r#"
+on run argv
+	set selected to choose file with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
+	return POSIX path of selected
+end run
+"#;
+		let result = run("osascript", &["-e".into(), script.into(), title.into(), dir.clone()], 0).await;
 		if result.ok {
 			return Ok(some_path(&result.stdout));
 		}
 		if !result.missing {
 			return Ok(None);
 		}
+		Err("No macOS file dialog found.".into())
 	}
-	Err("No file dialog found. Install kdialog or zenity, or type the path.".into())
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		let patterns = if images { linux_dialogs::IMAGE_PATTERNS } else { linux_dialogs::VIDEO_PATTERNS }.join(" ");
+		let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
+		let kind = if images { "Pictures" } else { "Media files" };
+		let begin = if start.is_empty() { dir.clone() } else { start.to_string() };
+		let kdialog = run(
+			"kdialog",
+			&["--title".into(), title.into(), "--getopenfilename".into(), begin, format!("{kind} ({patterns})|All files (*)")],
+			0,
+		)
+		.await;
+		if kdialog.ok {
+			return Ok(some_path(&kdialog.stdout));
+		}
+		if !kdialog.missing {
+			return Ok(None);
+		}
+		for tool in ["zenity", "qarma"] {
+			let file = if start.is_empty() { format!("{dir}/") } else { start.to_string() };
+			let args = vec![
+				"--file-selection".into(),
+				format!("--title={title}"),
+				format!("--filename={file}"),
+				format!("--file-filter={kind} | {patterns}"),
+				"--file-filter=All files | *".into(),
+			];
+			let result = run(tool, &args, 0).await;
+			if result.ok {
+				return Ok(some_path(&result.stdout));
+			}
+			if !result.missing {
+				return Ok(None);
+			}
+		}
+		Err("No file dialog found. Install kdialog or zenity, or type the path.".into())
+	}
 }
 
 /// Opens a folder dialog. The path, or None when the user cancels.
 pub async fn pick_folder(title: &str, start: &str) -> Res<Option<String>> {
-	let dir = if start.is_empty() { home() } else { start.to_string() };
-	let kdialog = run("kdialog", &["--title".into(), title.into(), "--getexistingdirectory".into(), dir.clone()], 0).await;
-	if kdialog.ok {
-		return Ok(some_path(&kdialog.stdout));
-	}
-	if !kdialog.missing {
-		return Ok(None);
-	}
-	for tool in ["zenity", "qarma"] {
-		let result =
-			run(tool, &["--file-selection".into(), "--directory".into(), format!("--title={title}"), format!("--filename={dir}/")], 0)
-				.await;
+	#[cfg(target_os = "macos")]
+	{
+		let dir = if start.is_empty() { home() } else { start.to_string() };
+		let script = r#"
+on run argv
+	set selected to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
+	return POSIX path of selected
+end run
+"#;
+		let result = run("osascript", &["-e".into(), script.into(), title.into(), dir.clone()], 0).await;
 		if result.ok {
 			return Ok(some_path(&result.stdout));
 		}
 		if !result.missing {
 			return Ok(None);
 		}
+		Err("No macOS folder dialog found.".into())
 	}
-	Err("No folder dialog found. Install kdialog or zenity, or type the path.".into())
+	#[cfg(not(target_os = "macos"))]
+	{
+		let dir = if start.is_empty() { home() } else { start.to_string() };
+		let kdialog = run("kdialog", &["--title".into(), title.into(), "--getexistingdirectory".into(), dir.clone()], 0).await;
+		if kdialog.ok {
+			return Ok(some_path(&kdialog.stdout));
+		}
+		if !kdialog.missing {
+			return Ok(None);
+		}
+		for tool in ["zenity", "qarma"] {
+			let result =
+				run(tool, &["--file-selection".into(), "--directory".into(), format!("--title={title}"), format!("--filename={dir}/")], 0)
+					.await;
+			if result.ok {
+				return Ok(some_path(&result.stdout));
+			}
+			if !result.missing {
+				return Ok(None);
+			}
+		}
+		Err("No folder dialog found. Install kdialog or zenity, or type the path.".into())
+	}
 }
 
 pub fn session_type() -> String {
-	let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-	if let Some(kind) = var("XDG_SESSION_TYPE") {
-		return kind;
+	#[cfg(target_os = "macos")]
+	return "macos".into();
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+		if let Some(kind) = var("XDG_SESSION_TYPE") {
+			return kind;
+		}
+		if var("WAYLAND_DISPLAY").is_some() {
+			return "wayland".into();
+		}
+		if var("DISPLAY").is_some() {
+			return "x11".into();
+		}
+		"unknown".into()
 	}
-	if var("WAYLAND_DISPLAY").is_some() {
-		return "wayland".into();
-	}
-	if var("DISPLAY").is_some() {
-		return "x11".into();
-	}
-	"unknown".into()
 }
 
 fn parse_xprop(text: &str, name: &str) -> Option<String> {

@@ -30,6 +30,8 @@ pub static DE: &[(&str, &str)] = &[
 	("Host {host} not found", "Host {host} nicht gefunden"),
 	("OBS closed the connection", "OBS hat die Verbindung geschlossen"),
 	("No answer from OBS", "Keine Antwort von OBS"),
+	("No macOS file dialog found.", "Kein macOS-Dateidialog gefunden."),
+	("No macOS folder dialog found.", "Kein macOS-Ordnerdialog gefunden."),
 	(
 		"No file dialog found. Install kdialog or zenity, or type the path.",
 		"Kein Dateidialog gefunden. Installiere kdialog oder zenity oder tipp den Pfad ein.",
@@ -491,8 +493,8 @@ pub static DE: &[(&str, &str)] = &[
 		"Unter Linux braucht die virtuelle Kamera das Kernelmodul v4l2loopback. Ist es nicht geladen, fragt OBS nach deinem Passwort, um es zu laden.",
 	),
 	(
-		"Points a Window Capture (Xcomposite) source at the window that has focus when you press the key. This only works when OBS runs on X11. On Wayland, OBS has no way to pick a window without asking you.",
-		"Richtet eine Fensteraufnahme (Xcomposite) auf das Fenster, das beim Drücken den Fokus hat. Das geht nur, wenn OBS unter X11 läuft. Unter Wayland kann OBS kein Fenster wählen, ohne dich zu fragen.",
+		"Linux only: points a Window Capture (Xcomposite) source at the window that has focus when you press the key. This only works when OBS runs on X11. On Wayland, OBS has no way to pick a window without asking you.",
+		"Nur unter Linux: Richtet eine Fensteraufnahme (Xcomposite) auf das Fenster, das beim Drücken den Fokus hat. Das geht nur, wenn OBS unter X11 läuft. Unter Wayland kann OBS kein Fenster wählen, ohne dich zu fragen.",
 	),
 	("Window capture", "Fensteraufnahme"),
 	("Wait first", "Vorher warten"),

@@ -1,6 +1,6 @@
 {
 	"Name": "OBS Tools",
-	"Description": "Erweiterte OBS-Werkzeuge für OpenDeck unter Linux: smarter Szenenwechsel mit Vorschau, Quellen-Animationen, Instant Replay, Videoplayer, Alarm bei Frame-Verlust und mehr.",
+	"Description": "Erweiterte OBS-Werkzeuge für OpenDeck unter Linux und macOS: smarter Szenenwechsel mit Vorschau, Quellen-Animationen, Instant Replay, Videoplayer, Alarm bei Frame-Verlust und mehr.",
 	"de.felitendo.obs-tools.recordtoggle": {
 		"Name": "Aufnahme an/aus",
 		"Tooltip": "Aufnahme starten, stoppen oder pausieren, auf diesem PC oder in einem anderen OBS im Netzwerk."
@@ -127,6 +127,6 @@
 	},
 	"de.felitendo.obs-tools.focusedwindow": {
 		"Name": "Aktives Fenster aufnehmen",
-		"Tooltip": "Eine Fensteraufnahme (Xcomposite) auf das Fenster mit dem Fokus richten. Braucht OBS unter X11."
+		"Tooltip": "Nur unter Linux: Eine Fensteraufnahme (Xcomposite) auf das Fenster mit dem Fokus richten. Braucht OBS unter X11."
 	}
 }

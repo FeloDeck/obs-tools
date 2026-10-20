@@ -3,9 +3,15 @@ VDECK    = de.felitendo.virtual-deck.sdPlugin
 VERSION := $(shell cat VERSION)
 TARGET  := $(or $(CARGO_TARGET_DIR),target)
 
-# Native OpenDeck. For the Flatpak use:
+# Native OpenDeck. On macOS this is in ~/Library/Application Support.
+# For the Linux Flatpak use:
 #   make install PLUGINS=~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+PLUGINS ?= $(HOME)/Library/Application Support/opendeck/plugins
+else
 PLUGINS ?= $(HOME)/.config/opendeck/plugins
+endif
 
 .PHONY: build install uninstall link install-virtual-deck uninstall-virtual-deck package check icons manifest clean
 
@@ -37,8 +43,8 @@ install-virtual-deck:
 uninstall-virtual-deck:
 	rm -rf "$(PLUGINS)/$(VDECK)"
 
-# dist/de.felitendo.obs-tools.streamDeckPlugin for x86_64 and aarch64, installable from the
-# OpenDeck plugin page. Needs zig and cargo-zigbuild.
+# dist/de.felitendo.obs-tools.streamDeckPlugin for Linux and macOS on x86_64 and ARM64,
+# installable from the OpenDeck plugin page. Linux builds need zig and cargo-zigbuild.
 package:
 	cargo xtask package
 

@@ -39,8 +39,8 @@ fn install_binary(built: &Path, target: &str) -> Result {
 	Ok(())
 }
 
-/// Builds for this PC, or with cargo-zigbuild for the given targets (an old glibc, so it runs on
-/// older distributions too).
+/// Builds for this PC, or with cargo-zigbuild for Linux targets. macOS targets need the native
+/// Apple SDK, so they are built with cargo on macOS.
 pub fn build(targets: &[String]) -> Result {
 	if targets.is_empty() {
 		exec(Command::new("cargo").args(["build", "--release", "--package", "obs-tools"]).current_dir(root()))?;
@@ -48,6 +48,11 @@ pub fn build(targets: &[String]) -> Result {
 		return install_binary(&target_dir().join("release").join("obs-tools"), &host);
 	}
 	for target in targets {
+		if target.ends_with("-apple-darwin") {
+			exec(Command::new("cargo").args(["build", "--release", "--package", "obs-tools", "--target", target]).current_dir(root()))?;
+			install_binary(&target_dir().join(target).join("release").join("obs-tools"), target)?;
+			continue;
+		}
 		let zigbuild = Command::new("cargo")
 			.args(["zigbuild", "--release", "--package", "obs-tools", "--target", &format!("{target}.{GLIBC}")])
 			.current_dir(root())
@@ -81,7 +86,7 @@ fn add_dir(zip: &mut zip::ZipWriter<fs::File>, dir: &Path, base: &Path) -> Resul
 	Ok(())
 }
 
-/// dist/de.felitendo.obs-tools.streamDeckPlugin, with the binaries for x86_64 and aarch64.
+/// dist/de.felitendo.obs-tools.streamDeckPlugin, with binaries for Linux and macOS.
 pub fn run() -> Result {
 	let _ = fs::remove_dir_all(plugin_dir().join("bin"));
 	build(&TARGETS.iter().map(|t| t.to_string()).collect::<Vec<_>>())?;
