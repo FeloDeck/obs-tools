@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="160" src="de.felitendo.obs-tools.sdPlugin/images/plugin.svg" alt="OBS Tools">
+  <img width="160" src="https://raw.githubusercontent.com/FeloDeck/obs-tools/main/de.felitendo.obs-tools.sdPlugin/images/plugin.svg" alt="OBS Tools">
 </p>
 
 <h1 align="center">OBS Tools for OpenDeck</h1>
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img width="720" src="res/opendeck.png" alt="OpenDeck with OBS Tools keys: live scene pictures, last scene, stream health, record, volume with a level meter, media control, a counter, CPU and four dials, and the settings of a Source Volume key with pictures of the key">
+  <img width="720" src="https://raw.githubusercontent.com/FeloDeck/obs-tools/main/res/opendeck.png" alt="OpenDeck with OBS Tools keys: live scene pictures, last scene, stream health, record, volume with a level meter, media control, a counter, CPU and four dials, and the settings of a Source Volume key with pictures of the key">
 </p>
 
 ## Install

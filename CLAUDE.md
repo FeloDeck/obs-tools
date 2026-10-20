@@ -95,6 +95,9 @@ release is just a sentence or two. Write for users: what they notice, not how th
 ## README
 
 - The virtual deck is a test tool. The README does not mention it.
+- Pictures use full links (`https://raw.githubusercontent.com/FeloDeck/obs-tools/main/...`). The
+  OpenDeck plugin store (marketplace.tacto.live) shows the README on its own site, where relative
+  paths do not load.
 - New UI (a key, a settings page) gets a screenshot in the README, next to the
   text about it. A real screenshot of it running, in English.
 - When a screen changes, take its screenshot again. The README never shows an old one.
