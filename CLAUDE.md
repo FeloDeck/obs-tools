@@ -27,6 +27,8 @@
   action reads them into its own struct with `k.settings::<T>()` (`#[derive(Deserialize, Default)]`
   and `#[serde(default, rename_all = "camelCase")]`): `src/settings.rs` reads every field the way
   JavaScript would. Use `String`, `bool`, `f64` or `serde_json::Value` fields, nothing that can fail.
+- macOS: write `if cfg!(target_os = "macos")` instead of `#[cfg(...)]` where you can, so Linux
+  builds and tests the macOS code too. `.github/workflows/check.yml` runs the tests on macOS as well.
 - `make package` builds for Linux on x86_64 and aarch64 with an old glibc (2.28), so it runs on
   older distributions too. It needs zig, `cargo-zigbuild` and the Rust library for aarch64 (Arch:
   `rust-aarch64-gnu`). The macOS binaries only build on a Mac, so on Linux it leaves them out. For
