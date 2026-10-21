@@ -2,6 +2,22 @@
 
 What each release brings, newest first.
 
+## v0.3.0
+
+_21 October 2026_
+
+Welcome to OBS Tools for OpenDeck `v0.3.0`! The plugin now runs on macOS too.
+
+### Highlights
+
+- Runs on macOS, on Intel and Apple Silicon Macs
+- Hotkey keys use the Mac key names: ⌃ Control, ⌥ Option, ⌘ Command
+- Focused Window Capture works with a macOS Screen Capture source
+- macOS audio sources show up on volume and mute keys
+- On Linux, your keys and settings stay as they are
+
+Thanks to nekename for the macOS port.
+
 ## v0.2.1
 
 _19 October 2026_
