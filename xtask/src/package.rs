@@ -39,8 +39,12 @@ fn install_binary(built: &Path, target: &str) -> Result {
 	Ok(())
 }
 
-/// Builds for this PC, or with cargo-zigbuild for Linux targets. macOS targets need the native
-/// Apple SDK, so they are built with cargo on macOS.
+fn is_macos(target: &str) -> bool {
+	target.ends_with("-apple-darwin")
+}
+
+/// Builds for this PC, or for the given targets: Linux with cargo-zigbuild (an old glibc, so it
+/// runs on older distributions too), macOS with cargo (it needs the Apple SDK, so only on a Mac).
 pub fn build(targets: &[String]) -> Result {
 	if targets.is_empty() {
 		exec(Command::new("cargo").args(["build", "--release", "--package", "obs-tools"]).current_dir(root()))?;
@@ -48,8 +52,9 @@ pub fn build(targets: &[String]) -> Result {
 		return install_binary(&target_dir().join("release").join("obs-tools"), &host);
 	}
 	for target in targets {
-		if target.ends_with("-apple-darwin") {
-			exec(Command::new("cargo").args(["build", "--release", "--package", "obs-tools", "--target", target]).current_dir(root()))?;
+		if is_macos(target) {
+			exec(Command::new("cargo").args(["build", "--release", "--package", "obs-tools", "--target", target]).current_dir(root()))
+				.map_err(|e| format!("{e}. macOS targets only build on a Mac, with the Rust library of the target (rustup target add)."))?;
 			install_binary(&target_dir().join(target).join("release").join("obs-tools"), target)?;
 			continue;
 		}
@@ -86,10 +91,13 @@ fn add_dir(zip: &mut zip::ZipWriter<fs::File>, dir: &Path, base: &Path) -> Resul
 	Ok(())
 }
 
-/// dist/de.felitendo.obs-tools.streamDeckPlugin, with binaries for Linux and macOS.
+/// dist/de.felitendo.obs-tools.streamDeckPlugin, with binaries for Linux and macOS. The macOS ones
+/// only build on a Mac, so elsewhere the file only has the Linux ones.
 pub fn run() -> Result {
 	let _ = fs::remove_dir_all(plugin_dir().join("bin"));
-	build(&TARGETS.iter().map(|t| t.to_string()).collect::<Vec<_>>())?;
+	let (targets, skipped): (Vec<String>, Vec<String>) =
+		TARGETS.iter().map(|t| t.to_string()).partition(|t| cfg!(target_os = "macos") || !is_macos(t));
+	build(&targets)?;
 	let dist = root().join("dist");
 	let _ = fs::remove_dir_all(&dist);
 	fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
@@ -103,5 +111,8 @@ pub fn run() -> Result {
 	zip.finish().map_err(|e| e.to_string())?;
 	let version = fs::read_to_string(root().join("VERSION")).unwrap_or_default();
 	println!("dist/de.felitendo.obs-tools.streamDeckPlugin ({})", version.trim());
+	if !skipped.is_empty() {
+		println!("Left out {}: they only build on a Mac.", skipped.join(", "));
+	}
 	Ok(())
 }

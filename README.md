@@ -48,7 +48,7 @@ Then restart OpenDeck. With the OpenDeck Flatpak, install into its folder:
 make install PLUGINS=~/.var/app/me.amankhanna.opendeck/config/opendeck/plugins
 ```
 
-`make package` builds `dist/de.felitendo.obs-tools.streamDeckPlugin` for x86_64 and ARM64 on Linux and macOS. Linux builds need zig and cargo-zigbuild. You can install that file on the **Plugins** page of OpenDeck.
+`make package` builds `dist/de.felitendo.obs-tools.streamDeckPlugin` for x86_64 and ARM64 (it needs zig and cargo-zigbuild). Built on a Mac, the file works on macOS too. You can install that file on the **Plugins** page of OpenDeck.
 
 </details>
 

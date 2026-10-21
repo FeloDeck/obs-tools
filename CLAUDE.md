@@ -27,9 +27,11 @@
   action reads them into its own struct with `k.settings::<T>()` (`#[derive(Deserialize, Default)]`
   and `#[serde(default, rename_all = "camelCase")]`): `src/settings.rs` reads every field the way
   JavaScript would. Use `String`, `bool`, `f64` or `serde_json::Value` fields, nothing that can fail.
-- `make package` builds for x86_64 and aarch64 with an old glibc (2.28), so it runs on older
-  distributions too. It needs zig, `cargo-zigbuild` and the Rust library for aarch64 (Arch:
-  `rust-aarch64-gnu`). `make install` only builds for this PC. Dev tools are Rust too:
+- `make package` builds for Linux on x86_64 and aarch64 with an old glibc (2.28), so it runs on
+  older distributions too. It needs zig, `cargo-zigbuild` and the Rust library for aarch64 (Arch:
+  `rust-aarch64-gnu`). The macOS binaries only build on a Mac, so on Linux it leaves them out. For
+  releases, `.github/workflows/release.yml` builds all four on a Mac. `make install` only builds
+  for this PC. Dev tools are Rust too:
   `cargo xtask` lists them.
 - Plugin ID is `de.felitendo.obs-tools` (folder `de.felitendo.obs-tools.sdPlugin`), like the
   Feishin plugin. Do not change it again: OpenDeck keys profiles and settings by it.
@@ -84,10 +86,13 @@
    something that breaks or needs the user to act → major.
 2. Bump `VERSION`, run `make manifest` and add the entry at the top of `CHANGELOG.md`, in one commit
    (`chore: 1.4.0`).
-3. Push, then push the tag: `git tag v1.4.0 && git push origin main v1.4.0`.
-4. `make package` (both CPUs in one file), then `gh release create v1.4.0` with the entry from `CHANGELOG.md` and a short
-   install part as notes, and only the plugin file, named `OBS-Tools-v1.4.0.streamDeckPlugin`. Never
-   attach a `.zip` as well: the plugin store of OpenDeck then asks which file to download.
+3. Push, then push the tag: `git tag v1.4.0 && git push origin main v1.4.0`. The tag starts the
+   release workflow, which builds the plugin file for Linux and macOS.
+4. Wait for it (`gh run watch --exit-status <id>`, the id from `gh run list -w release.yml -L 1`),
+   then `gh run download -n OBS-Tools-v1.4.0.streamDeckPlugin -D dist`.
+5. `gh release create v1.4.0` with the entry from `CHANGELOG.md` and a short install part as notes,
+   and only `dist/OBS-Tools-v1.4.0.streamDeckPlugin`. Never attach a `.zip` as well: the plugin
+   store of OpenDeck then asks which file to download.
 
 A minor or major release starts with a welcome sentence and has a `### Highlights` list. A patch
 release is just a sentence or two. Write for users: what they notice, not how the code does it.

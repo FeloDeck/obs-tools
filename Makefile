@@ -43,8 +43,8 @@ install-virtual-deck:
 uninstall-virtual-deck:
 	rm -rf "$(PLUGINS)/$(VDECK)"
 
-# dist/de.felitendo.obs-tools.streamDeckPlugin for Linux and macOS on x86_64 and ARM64,
-# installable from the OpenDeck plugin page. Linux builds need zig and cargo-zigbuild.
+# dist/de.felitendo.obs-tools.streamDeckPlugin for x86_64 and ARM64, installable from the
+# OpenDeck plugin page. Needs zig and cargo-zigbuild. Only on a Mac it has the macOS binaries too.
 package:
 	cargo xtask package
 

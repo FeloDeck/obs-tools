@@ -1,0 +1,45 @@
+# Builds the plugin file for a release, with the binaries for Linux and macOS. It runs on a Mac,
+# because only there the macOS ones build. Download the file with:
+#   gh run download -n OBS-Tools-v<version>.streamDeckPlugin -D dist
+name: Release build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check the tag
+        if: github.ref_type == 'tag'
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$(cat VERSION)" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION ($(cat VERSION))."
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: cargo install --locked cargo-zigbuild
+      - run: cargo xtask package
+      - name: Check the binaries
+        run: |
+          file de.felitendo.obs-tools.sdPlugin/bin/*/obs-tools
+          codesign --verify de.felitendo.obs-tools.sdPlugin/bin/aarch64-apple-darwin/obs-tools
+      - id: name
+        run: echo "file=OBS-Tools-v$(cat VERSION).streamDeckPlugin" >> "$GITHUB_OUTPUT"
+      - run: mv dist/de.felitendo.obs-tools.streamDeckPlugin "dist/${{ steps.name.outputs.file }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.file }}
+          path: dist/${{ steps.name.outputs.file }}
+          if-no-files-found: error
