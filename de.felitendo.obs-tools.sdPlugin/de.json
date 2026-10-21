@@ -127,6 +127,6 @@
 	},
 	"de.felitendo.obs-tools.focusedwindow": {
 		"Name": "Aktives Fenster aufnehmen",
-		"Tooltip": "Nur unter Linux: Eine Fensteraufnahme (Xcomposite) auf das Fenster mit dem Fokus richten. Braucht OBS unter X11."
+		"Tooltip": "Eine Fensteraufnahme auf das Fenster mit dem Fokus richten. Unter Linux braucht das OBS unter X11."
 	}
 }

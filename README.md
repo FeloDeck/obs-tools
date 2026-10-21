@@ -102,7 +102,7 @@ Everything from BarRaider's OBS Tools, plus what Elgato's own OBS plugin does on
 | OBS CPU Usage | How much CPU OBS uses. Turns red above a limit. |
 | Source Monitor Set | Audio monitoring off, monitor only, or monitor and output. |
 | Profile / Scene Collection | Switch to another profile or scene collection. |
-| Focused Window Capture | Linux only. Point a window capture at the window that has focus (OBS on X11). |
+| Focused Window Capture | Point a window capture at the window that has focus (on Linux, OBS on X11). |
 
 Most keys can do one thing on press, another on hold and another on double press. Keys that turn something on or off can also only turn it on, or only off. That helps in multi actions. Many keys can show the name of their source as title.
 

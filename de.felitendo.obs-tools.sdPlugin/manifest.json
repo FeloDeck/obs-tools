@@ -682,7 +682,7 @@
 			"UUID": "de.felitendo.obs-tools.focusedwindow",
 			"Name": "Focused Window Capture",
 			"Icon": "images/actions/window",
-			"Tooltip": "Linux only: point a Window Capture (Xcomposite) source at the window that has focus. Needs OBS on X11.",
+			"Tooltip": "Point a window capture at the window that has focus. On Linux it needs OBS on X11.",
 			"Controllers": [
 				"Keypad"
 			],

@@ -1,7 +1,9 @@
-// Small desktop helpers: native file and folder pickers, and the focused X11 window.
+// Small desktop helpers: native file and folder pickers, and the focused window (X11 or macOS).
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
+
+use serde_json::{Value, json};
 
 use crate::Res;
 
@@ -225,6 +227,76 @@ pub fn xcomposite_window_value(w: &Window) -> String {
 	format!("{}\r\n{}\r\n{}", w.id, w.name, w.cls)
 }
 
+/// The settings that point a window capture at the window that has focus, and that window for the
+/// log. `kind` and `current` are the input kind and the settings the source has now.
+pub async fn focused_window_settings(kind: &str, current: &Value) -> Res<(Value, String)> {
+	if cfg!(target_os = "macos") {
+		let Some(window) = active_mac_window().await? else { return Err("no focused window found".into()) };
+		return Ok((mac_capture_settings(kind, current, &window)?, format!("{} ({})", window.name, window.owner)));
+	}
+	let Some(window) = active_x11_window().await? else {
+		return Err(if session_type() == "wayland" {
+			"no X11 window has focus (Wayland apps cannot be picked)"
+		} else {
+			"no focused window found"
+		}
+		.into());
+	};
+	Ok((json!({ "capture_window": xcomposite_window_value(&window) }), format!("{} ({})", window.name, window.cls)))
+}
+
+/// The focused window on macOS.
+#[derive(Debug, Clone, PartialEq)]
+struct MacWindow {
+	id: u64,
+	/// Empty when OpenDeck may not record the screen (System Settings, Privacy).
+	name: String,
+	/// The app.
+	owner: String,
+	bundle: String,
+}
+
+// JavaScript for Automation: the front window of the app that has focus. It needs no permission.
+const MAC_FRONT_WINDOW: &str = r#"
+ObjC.import("AppKit");
+ObjC.import("CoreGraphics");
+function run() {
+	const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+	const pid = app.processIdentifier;
+	// 17: only windows on screen, without the desktop. The list goes from front to back.
+	const windows = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17, 0))) || [];
+	const w = windows.find((w) => w.kCGWindowOwnerPID === pid && w.kCGWindowLayer === 0);
+	if (!w) return "";
+	const bundle = ObjC.unwrap(app.bundleIdentifier) || "";
+	return JSON.stringify({ id: w.kCGWindowNumber, name: w.kCGWindowName || "", owner: w.kCGWindowOwnerName || "", bundle });
+}
+"#;
+
+async fn active_mac_window() -> Res<Option<MacWindow>> {
+	let result = run("osascript", &["-l".into(), "JavaScript".into(), "-e".into(), MAC_FRONT_WINDOW.into()], 5000).await;
+	if !result.ok {
+		return Err("could not read the focused window".into());
+	}
+	Ok(parse_mac_window(&result.stdout))
+}
+
+fn parse_mac_window(text: &str) -> Option<MacWindow> {
+	let v: Value = serde_json::from_str(text.trim()).ok()?;
+	let text = |key: &str| v[key].as_str().unwrap_or_default().to_string();
+	Some(MacWindow { id: v["id"].as_u64().filter(|id| *id > 0)?, name: text("name"), owner: text("owner"), bundle: text("bundle") })
+}
+
+fn mac_capture_settings(kind: &str, current: &Value, window: &MacWindow) -> Res<Value> {
+	match kind {
+		// macOS Screen Capture. "type": 0 a display, 1 a window, 2 an app. An app capture stays one.
+		"screen_capture" if current["type"].as_i64() == Some(2) && !window.bundle.is_empty() => Ok(json!({ "application": window.bundle })),
+		"screen_capture" => Ok(json!({ "type": 1, "window": window.id })),
+		// The old Window Capture. It finds the window again by its names.
+		"window_capture" => Ok(json!({ "window": window.id, "owner_name": window.owner, "window_name": window.name })),
+		_ => Err("this source is not a window capture".into()),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -235,6 +307,46 @@ mod tests {
 			xcomposite_window_value(&Window { id: 123, name: "Firefox".into(), cls: "Navigator".into() }),
 			"123\r\nFirefox\r\nNavigator"
 		);
+	}
+
+	#[test]
+	fn mac_windows() {
+		let text = r#"{"id":4711,"name":"Inbox","owner":"Mail","bundle":"com.apple.mail"}"#;
+		let window = parse_mac_window(&format!("{text}\n")).expect("window");
+		assert_eq!(window, MacWindow { id: 4711, name: "Inbox".into(), owner: "Mail".into(), bundle: "com.apple.mail".into() });
+		assert_eq!(parse_mac_window(""), None);
+		assert_eq!(parse_mac_window(r#"{"id":0}"#), None);
+
+		let display = json!({});
+		assert_eq!(mac_capture_settings("screen_capture", &display, &window).ok(), Some(json!({ "type": 1, "window": 4711 })));
+		let app = json!({ "type": 2, "application": "com.apple.Safari" });
+		assert_eq!(mac_capture_settings("screen_capture", &app, &window).ok(), Some(json!({ "application": "com.apple.mail" })));
+		assert_eq!(
+			mac_capture_settings("window_capture", &display, &window).ok(),
+			Some(json!({ "window": 4711, "owner_name": "Mail", "window_name": "Inbox" }))
+		);
+		assert!(mac_capture_settings("image_source", &display, &window).is_err());
+	}
+
+	// The script for macOS, run with a fake macOS: the front window of the app that has focus.
+	#[test]
+	fn mac_script_finds_the_front_window() {
+		let fake = r#"
+			const ObjC = { import() {}, deepUnwrap: (x) => x, castRefToObject: (x) => x, unwrap: (x) => x };
+			const $ = {
+				NSWorkspace: { sharedWorkspace: { frontmostApplication: { processIdentifier: 42, bundleIdentifier: "com.apple.mail" } } },
+				CGWindowListCopyWindowInfo: () => [
+					{ kCGWindowOwnerPID: 7, kCGWindowLayer: 0, kCGWindowNumber: 1 },
+					{ kCGWindowOwnerPID: 42, kCGWindowLayer: 25, kCGWindowNumber: 2 },
+					{ kCGWindowOwnerPID: 42, kCGWindowLayer: 0, kCGWindowNumber: 3, kCGWindowName: "Inbox", kCGWindowOwnerName: "Mail" },
+				],
+			};
+		"#;
+		let mut context = boa_engine::Context::default();
+		let out = context.eval(boa_engine::Source::from_bytes(&format!("{fake}{MAC_FRONT_WINDOW}\nrun()"))).expect("script runs");
+		let text = out.to_string(&mut context).expect("text").to_std_string_escaped();
+		let mail = MacWindow { id: 3, name: "Inbox".into(), owner: "Mail".into(), bundle: "com.apple.mail".into() };
+		assert_eq!(parse_mac_window(&text), Some(mail));
 	}
 
 	#[test]

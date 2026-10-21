@@ -7,7 +7,7 @@ use super::basics::scene_or_live;
 use super::{Behavior, KeyRc, Kind, PiReply, Press, defaults, patch, same_name};
 use crate::Res;
 use crate::animation::{self, Run, diff_transforms, normalize_phase, run_animation, total_duration};
-use crate::desktop::{active_x11_window, session_type, xcomposite_window_value};
+use crate::desktop::focused_window_settings;
 use crate::js;
 use crate::media::{PlayOptions, Playback, play_media};
 use crate::settings::or;
@@ -666,7 +666,7 @@ pub static FILTER_TOGGLE: Kind = Kind {
 	..Kind::BASE
 };
 
-// ----- Focused Window Capture: points a Window Capture (Xcomposite) source at the focused window. -----
+// ----- Focused Window Capture: points a window capture at the focused window (X11 or macOS). -----
 
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -686,24 +686,14 @@ impl Behavior for FocusedWindow {
 			return Err("no window capture source selected".into());
 		}
 		// Fails early when the source is missing.
-		k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
+		let input = k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
 		if s.delay > 0.0 {
 			crate::timers::sleep(s.delay * 1000.0).await;
 		}
-		let Some(window) = active_x11_window().await? else {
-			return Err(if session_type() == "wayland" {
-				"no X11 window has focus (Wayland apps cannot be picked)"
-			} else {
-				"no focused window found"
-			}
-			.into());
-		};
-		k.call(
-			"SetInputSettings",
-			json!({ "inputName": s.input, "inputSettings": { "capture_window": xcomposite_window_value(&window) }, "overlay": true }),
-		)
-		.await?;
-		k.log(&format!("window capture \"{}\" -> {} ({})", s.input, window.name, window.cls));
+		let kind = input["inputKind"].as_str().unwrap_or_default();
+		let (settings, window) = focused_window_settings(kind, &input["inputSettings"]).await?;
+		k.call("SetInputSettings", json!({ "inputName": s.input, "inputSettings": settings, "overlay": true })).await?;
+		k.log(&format!("window capture \"{}\" -> {window}", s.input));
 		k.show_ok();
 		Ok(())
 	}

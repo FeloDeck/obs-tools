@@ -456,7 +456,7 @@ export const SCHEMAS = {
 		fields: [...gestures("mode", START_STOP)],
 	},
 	[`${ID}.focusedwindow`]: {
-		help: "Linux only: points a Window Capture (Xcomposite) source at the window that has focus when you press the key. This only works when OBS runs on X11. On Wayland, OBS has no way to pick a window without asking you.",
+		help: "Points a window capture at the window that has focus when you press the key. On macOS, use a macOS Screen Capture source. On Linux, use a Window Capture (Xcomposite) source, and OBS must run on X11: on Wayland, OBS has no way to pick a window without asking you.",
 		fields: [
 			{ key: "input", label: "Window capture", type: "select", list: "windowInputs" },
 			{ key: "delay", label: "Wait first", type: "number", min: 0, max: 10, step: 0.5, unit: "seconds" },
