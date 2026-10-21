@@ -702,11 +702,14 @@ function selectInput(field) {
 	return dropdown({ value, options, placeholder, focusKey: field.key, onChange: (v) => setValue(field.key, v, true) });
 }
 
+// A text of a field, or (state) => text when it depends on the system OBS runs on.
+const forObs = (text) => (typeof text === "function" ? text(conn) : text);
+
 function renderField(field) {
 	const { key } = field;
 	const label = field.label ? t(field.label) : field.label;
 	const hint = field.hint ? t(field.hint) : field.hint;
-	const placeholder = field.placeholder ? t(field.placeholder) : field.placeholder;
+	const placeholder = field.placeholder ? t(forObs(field.placeholder)) : field.placeholder;
 	switch (field.type) {
 		case "help":
 		case "note":
@@ -720,7 +723,7 @@ function renderField(field) {
 			return row(label, [numberInput(field), unit ? h("span", { class: "unit" }, t(unit)) : null], { hint });
 		}
 		case "checkbox":
-			return row(label, checkbox(settings[key], field.text ? t(field.text) : "", (on) => setValue(key, on, true)));
+			return row(label, checkbox(settings[key], field.text ? t(forObs(field.text)) : "", (on) => setValue(key, on, true)));
 		case "color":
 			return row(
 				label,

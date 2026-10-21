@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use crate::{Result, plugin_dir, root, write};
 
 /// The targets the release is built for, and where their plugin binary goes.
-pub const TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
+pub const TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"];
 
 pub fn binary_path(target: &str) -> String {
 	format!("bin/{target}/obs-tools")
@@ -63,7 +63,7 @@ pub fn manifest() -> Value {
 		"Name": "OBS Tools",
 		"Version": version,
 		"Author": "Felitendo",
-		"Description": "Advanced OBS tools for OpenDeck on Linux: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
+		"Description": "Advanced OBS tools for OpenDeck on Linux and macOS: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
 		"URL": "https://github.com/FeloDeck/obs-tools",
 		"Icon": "images/plugin",
 		"Category": "OBS Tools",
@@ -73,7 +73,7 @@ pub fn manifest() -> Value {
 		"CodePaths": code_paths,
 		"PropertyInspectorPath": "pi/index.html",
 		"SDKVersion": 2,
-		"OS": [{ "Platform": "linux" }],
+		"OS": [{ "Platform": "linux" }, { "Platform": "mac" }],
 		"Actions": ACTIONS.iter().map(action).collect::<Vec<_>>(),
 	})
 }
@@ -83,7 +83,7 @@ fn localized() -> Value {
 	out.insert("Name".into(), "OBS Tools".into());
 	out.insert(
 		"Description".into(),
-		"Erweiterte OBS-Werkzeuge für OpenDeck unter Linux: smarter Szenenwechsel mit Vorschau, Quellen-Animationen, Instant Replay, Videoplayer, Alarm bei Frame-Verlust und mehr.".into(),
+		"Erweiterte OBS-Werkzeuge für OpenDeck unter Linux und macOS: smarter Szenenwechsel mit Vorschau, Quellen-Animationen, Instant Replay, Videoplayer, Alarm bei Frame-Verlust und mehr.".into(),
 	);
 	for a in ACTIONS {
 		out.insert(format!("{ID}.{}", a.id), json!({ "Name": a.de_name, "Tooltip": a.de_tooltip }));

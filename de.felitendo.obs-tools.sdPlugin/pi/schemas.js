@@ -19,6 +19,12 @@ export const LOOK = "look";
 const MORE = "More options";
 // Dials have no key: their look is on the touch strip.
 const DIAL = { lookTitle: "On the display" };
+// OBS on a Mac names keys and folders the Mac way. text and placeholder can be (state) => text for
+// that. Before OBS answers, this guesses from the PC the plugin runs on.
+const onMac = (state) => {
+	const os = state?.connection?.version?.os;
+	return os ? ["macos", "osx"].includes(os) : state?.session === "macos";
+};
 
 // Press, hold and double press offer the same choices (the plugin side: Action.gesture).
 // pressOnly: choices only for press, they use the key going down and up (push to talk).
@@ -179,7 +185,7 @@ export const SCHEMAS = {
 		help: "Many keys can use the same media source. Each key plays its own file.",
 		fields: [
 			{ key: "input", label: "Media source", type: "select", list: "mediaInputs" },
-			{ key: "file", label: "File", type: "file", placeholder: "/home/you/Videos/clip.mp4", hint: "Empty = play the file the source already has" },
+			{ key: "file", label: "File", type: "file", placeholder: (c) => (onMac(c) ? "/Users/you/Movies/clip.mp4" : "/home/you/Videos/clip.mp4"), hint: "Empty = play the file the source already has" },
 			...gestures("press", [
 				["play", "Play"],
 				["stop", "Stop"],
@@ -209,7 +215,7 @@ export const SCHEMAS = {
 		fields: [
 			{ key: "scene", label: "Scene", type: "select", list: "scenes", empty: "Current live scene" },
 			{ key: "input", label: "Image source", type: "select", list: "imageInputs" },
-			{ key: "file", label: "Picture", type: "file", images: true, placeholder: "/home/you/Pictures/brb.png", hint: "Empty = show the picture the source already has" },
+			{ key: "file", label: "Picture", type: "file", images: true, placeholder: (c) => (onMac(c) ? "/Users/you/Pictures/brb.png" : "/home/you/Pictures/brb.png"), hint: "Empty = show the picture the source already has" },
 			...gestures("mode", [
 				["toggle", "Toggle"],
 				["show", "Show"],
@@ -452,11 +458,11 @@ export const SCHEMAS = {
 		],
 	},
 	[`${ID}.virtualcam`]: {
-		help: "On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it.",
+		help: "On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it. On macOS, you allow the OBS camera once in System Settings the first time you start it.",
 		fields: [...gestures("mode", START_STOP)],
 	},
 	[`${ID}.focusedwindow`]: {
-		help: "Points a Window Capture (Xcomposite) source at the window that has focus when you press the key. This only works when OBS runs on X11. On Wayland, OBS has no way to pick a window without asking you.",
+		help: "Points a window capture at the window that has focus when you press the key. On macOS, use a macOS Screen Capture source. On Linux, use a Window Capture (Xcomposite) source, and OBS must run on X11: on Wayland, OBS has no way to pick a window without asking you.",
 		fields: [
 			{ key: "input", label: "Window capture", type: "select", list: "windowInputs" },
 			{ key: "delay", label: "Wait first", type: "number", min: 0, max: 10, step: 0.5, unit: "seconds" },
@@ -574,10 +580,10 @@ export const SCHEMAS = {
 				],
 				showIf: (s) => s.mode === "keys",
 			},
-			{ key: "control", label: "With", type: "checkbox", text: "Ctrl", showIf: (s) => s.mode === "keys" },
-			{ key: "shift", label: "", type: "checkbox", text: "Shift", showIf: (s) => s.mode === "keys" },
-			{ key: "alt", label: "", type: "checkbox", text: "Alt", showIf: (s) => s.mode === "keys" },
-			{ key: "command", label: "", type: "checkbox", text: "Super", showIf: (s) => s.mode === "keys" },
+			{ key: "control", label: "With", type: "checkbox", text: (c) => (onMac(c) ? "⌃ Control" : "Ctrl"), showIf: (s) => s.mode === "keys" },
+			{ key: "shift", label: "", type: "checkbox", text: (c) => (onMac(c) ? "⇧ Shift" : "Shift"), showIf: (s) => s.mode === "keys" },
+			{ key: "alt", label: "", type: "checkbox", text: (c) => (onMac(c) ? "⌥ Option" : "Alt"), showIf: (s) => s.mode === "keys" },
+			{ key: "command", label: "", type: "checkbox", text: (c) => (onMac(c) ? "⌘ Command" : "Super"), showIf: (s) => s.mode === "keys" },
 			{ type: "note", text: "Set the same keys in OBS under Settings → Hotkeys. F13 to F24 work well, because no keyboard uses them.", showIf: (s) => s.mode === "keys" },
 		],
 	},

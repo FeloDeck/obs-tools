@@ -341,9 +341,9 @@ pub static ACTIONS: &[ActionDef] = &[
 		"focusedwindow",
 		"Focused Window Capture",
 		"window",
-		"Point a Window Capture (Xcomposite) source at the window that has focus. Needs OBS on X11.",
+		"Point a window capture at the window that has focus. On Linux it needs OBS on X11.",
 		&["window"],
-		["Aktives Fenster aufnehmen", "Eine Fensteraufnahme (Xcomposite) auf das Fenster mit dem Fokus richten. Braucht OBS unter X11."],
+		["Aktives Fenster aufnehmen", "Eine Fensteraufnahme auf das Fenster mit dem Fokus richten. Unter Linux braucht das OBS unter X11."],
 	),
 ];
 

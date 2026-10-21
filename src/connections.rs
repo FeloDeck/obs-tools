@@ -32,10 +32,13 @@ fn config_home() -> PathBuf {
 	std::env::var_os("XDG_CONFIG_HOME").filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(|| home().join(".config"))
 }
 
-/// Where OBS keeps the obs-websocket settings on Linux (native and Flatpak).
+/// Where OBS keeps the obs-websocket settings on this PC.
 pub fn local_config_paths() -> Vec<PathBuf> {
 	let tail = PathBuf::from("obs-studio").join("plugin_config").join("obs-websocket").join("config.json");
-	vec![config_home().join(&tail), home().join(".var").join("app").join("com.obsproject.Studio").join("config").join(&tail)]
+	if cfg!(target_os = "macos") {
+		return vec![home().join("Library").join("Application Support").join(tail)];
+	}
+	vec![config_home().join(&tail), home().join(".var").join("app").join("com.obsproject.Studio").join("config").join(tail)]
 }
 
 #[derive(Debug, Clone, PartialEq)]

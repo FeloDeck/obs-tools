@@ -22,6 +22,7 @@ const AUDIO_KINDS: &[&str] = &[
 	"wasapi_process_output_capture",
 	"coreaudio_input_capture",
 	"coreaudio_output_capture",
+	"sck_audio_capture",
 	"ffmpeg_source",
 	"vlc_source",
 	"browser_source",
@@ -94,7 +95,8 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 					"mediaInputs" => MEDIA_KINDS.contains(&kind),
 					"imageInputs" => kind == "image_source",
 					"browserInputs" => kind == "browser_source",
-					"windowInputs" => kind == "xcomposite_input",
+					// Linux (X11), macOS Screen Capture and the old macOS Window Capture.
+					"windowInputs" => matches!(kind, "xcomposite_input" | "screen_capture" | "window_capture"),
 					_ => kind.starts_with("text_"),
 				};
 				let items: Vec<Value> = get_inputs(&client, &mut inputs).await.into_iter().filter(|i| wanted(kind_of(i))).collect();

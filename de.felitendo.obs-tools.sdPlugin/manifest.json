@@ -4,7 +4,7 @@
 	"Name": "OBS Tools",
 	"Version": "0.2.1",
 	"Author": "Felitendo",
-	"Description": "Advanced OBS tools for OpenDeck on Linux: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
+	"Description": "Advanced OBS tools for OpenDeck on Linux and macOS: smart scene switching with previews, source animations, instant replay, video player, dropped frame alarm and more.",
 	"URL": "https://github.com/FeloDeck/obs-tools",
 	"Icon": "images/plugin",
 	"Category": "OBS Tools",
@@ -12,13 +12,18 @@
 	"CodePath": "bin/x86_64-unknown-linux-gnu/obs-tools",
 	"CodePaths": {
 		"x86_64-unknown-linux-gnu": "bin/x86_64-unknown-linux-gnu/obs-tools",
-		"aarch64-unknown-linux-gnu": "bin/aarch64-unknown-linux-gnu/obs-tools"
+		"aarch64-unknown-linux-gnu": "bin/aarch64-unknown-linux-gnu/obs-tools",
+		"x86_64-apple-darwin": "bin/x86_64-apple-darwin/obs-tools",
+		"aarch64-apple-darwin": "bin/aarch64-apple-darwin/obs-tools"
 	},
 	"PropertyInspectorPath": "pi/index.html",
 	"SDKVersion": 2,
 	"OS": [
 		{
 			"Platform": "linux"
+		},
+		{
+			"Platform": "mac"
 		}
 	],
 	"Actions": [
@@ -677,7 +682,7 @@
 			"UUID": "de.felitendo.obs-tools.focusedwindow",
 			"Name": "Focused Window Capture",
 			"Icon": "images/actions/window",
-			"Tooltip": "Point a Window Capture (Xcomposite) source at the window that has focus. Needs OBS on X11.",
+			"Tooltip": "Point a window capture at the window that has focus. On Linux it needs OBS on X11.",
 			"Controllers": [
 				"Keypad"
 			],

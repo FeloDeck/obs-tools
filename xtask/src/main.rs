@@ -15,7 +15,7 @@ const USAGE: &str = "cargo xtask <command>
   fit-glyphs            measure the glyphs (needs ImageMagick), writes src/glyph_fit.rs
   icons                 write the SVG icons in images/ (run fit-glyphs first)
   build [target...]     build the plugin into bin/<target>/ (default: this PC)
-  package               build for x86_64 and aarch64 and write dist/*.streamDeckPlugin
+  package               build for Linux (and macOS on a Mac) and write dist/*.streamDeckPlugin
   profile <layout.json> [name]
                         write an OpenDeck profile for the virtual deck (stop OpenDeck first)
   setup-obs             create the scenes and sources the end-to-end tests expect

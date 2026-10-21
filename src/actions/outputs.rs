@@ -197,8 +197,8 @@ impl Behavior for VirtualCam {
 			if active {
 				return Ok(());
 			}
-			// Without v4l2loopback, OBS asks for an admin password to load it. Give the user time.
-			let loaded = std::path::Path::new("/sys/module/v4l2loopback").exists();
+			// On Linux without v4l2loopback, OBS asks for an admin password to load it. Give the user time.
+			let loaded = !cfg!(target_os = "linux") || std::path::Path::new("/sys/module/v4l2loopback").exists();
 			if !loaded {
 				k.log("v4l2loopback is not loaded, OBS will ask for a password to load it");
 			}
