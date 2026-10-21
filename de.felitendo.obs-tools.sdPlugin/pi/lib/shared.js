@@ -25,8 +25,6 @@ export const DE = {
 	"Host {host} not found": "Host {host} nicht gefunden",
 	"OBS closed the connection": "OBS hat die Verbindung geschlossen",
 	"No answer from OBS": "Keine Antwort von OBS",
-	"No macOS file dialog found.": "Kein macOS-Dateidialog gefunden.",
-	"No macOS folder dialog found.": "Kein macOS-Ordnerdialog gefunden.",
 	"No file dialog found. Install kdialog or zenity, or type the path.": "Kein Dateidialog gefunden. Installiere kdialog oder zenity oder tipp den Pfad ein.",
 	"No folder dialog found. Install kdialog or zenity, or type the path.": "Kein Ordnerdialog gefunden. Installiere kdialog oder zenity oder tipp den Pfad ein.",
 	"Nothing changed. Move or resize the source in OBS between the two clicks.": "Nichts geändert. Verschiebe oder skaliere die Quelle in OBS zwischen den beiden Klicks.",

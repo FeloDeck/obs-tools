@@ -30,8 +30,6 @@ pub static DE: &[(&str, &str)] = &[
 	("Host {host} not found", "Host {host} nicht gefunden"),
 	("OBS closed the connection", "OBS hat die Verbindung geschlossen"),
 	("No answer from OBS", "Keine Antwort von OBS"),
-	("No macOS file dialog found.", "Kein macOS-Dateidialog gefunden."),
-	("No macOS folder dialog found.", "Kein macOS-Ordnerdialog gefunden."),
 	(
 		"No file dialog found. Install kdialog or zenity, or type the path.",
 		"Kein Dateidialog gefunden. Installiere kdialog oder zenity oder tipp den Pfad ein.",

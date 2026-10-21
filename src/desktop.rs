@@ -1,4 +1,4 @@
-// Small desktop helpers: native file and folder pickers, and the focused window.
+// Small desktop helpers: native file and folder pickers, and the focused X11 window.
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -61,137 +61,113 @@ fn some_path(text: &str) -> Option<String> {
 	if text.is_empty() { None } else { Some(text.to_string()) }
 }
 
-#[cfg(not(target_os = "macos"))]
-mod linux_dialogs {
-	pub const IMAGE_PATTERNS: &[&str] = &["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.tga", "*.psd"];
-	pub const VIDEO_PATTERNS: &[&str] =
-		&["*.mp4", "*.mkv", "*.mov", "*.webm", "*.flv", "*.avi", "*.ts", "*.m4v", "*.gif", "*.mp3", "*.wav", "*.ogg", "*.flac"];
-}
+const IMAGE_PATTERNS: &[&str] = &["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp", "*.tga", "*.psd"];
+const VIDEO_PATTERNS: &[&str] =
+	&["*.mp4", "*.mkv", "*.mov", "*.webm", "*.flv", "*.avi", "*.ts", "*.m4v", "*.gif", "*.mp3", "*.wav", "*.ogg", "*.flac"];
 
 /// Opens a file dialog. The path, or None when the user cancels.
 pub async fn pick_file(title: &str, start: &str, images: bool) -> Res<Option<String>> {
-	#[cfg(target_os = "macos")]
-	{
-		let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
-		let dir = if Path::new(&dir).is_dir() { dir } else { home() };
-		let script = r#"
-on run argv
-	set selected to choose file with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
-	return POSIX path of selected
-end run
-"#;
-		let result = run("osascript", &["-e".into(), script.into(), title.into(), dir.clone()], 0).await;
+	if cfg!(target_os = "macos") {
+		let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Movies" }) } else { dirname(start) };
+		// Only pictures get a filter: macOS knows no type for some videos (like .mkv) and would gray them out.
+		return Ok(choose(if images { "choose file of type {\"public.image\"}" } else { "choose file" }, title, &dir).await);
+	}
+	let patterns = if images { IMAGE_PATTERNS } else { VIDEO_PATTERNS }.join(" ");
+	let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
+	let kind = if images { "Pictures" } else { "Media files" };
+	let begin = if start.is_empty() { dir.clone() } else { start.to_string() };
+	let kdialog = run(
+		"kdialog",
+		&["--title".into(), title.into(), "--getopenfilename".into(), begin, format!("{kind} ({patterns})|All files (*)")],
+		0,
+	)
+	.await;
+	if kdialog.ok {
+		return Ok(some_path(&kdialog.stdout));
+	}
+	if !kdialog.missing {
+		return Ok(None);
+	}
+	for tool in ["zenity", "qarma"] {
+		let file = if start.is_empty() { format!("{dir}/") } else { start.to_string() };
+		let args = vec![
+			"--file-selection".into(),
+			format!("--title={title}"),
+			format!("--filename={file}"),
+			format!("--file-filter={kind} | {patterns}"),
+			"--file-filter=All files | *".into(),
+		];
+		let result = run(tool, &args, 0).await;
 		if result.ok {
 			return Ok(some_path(&result.stdout));
 		}
 		if !result.missing {
 			return Ok(None);
 		}
-		Err("No macOS file dialog found.".into())
 	}
-
-	#[cfg(not(target_os = "macos"))]
-	{
-		let patterns = if images { linux_dialogs::IMAGE_PATTERNS } else { linux_dialogs::VIDEO_PATTERNS }.join(" ");
-		let dir = if start.is_empty() { format!("{}/{}", home(), if images { "Pictures" } else { "Videos" }) } else { dirname(start) };
-		let kind = if images { "Pictures" } else { "Media files" };
-		let begin = if start.is_empty() { dir.clone() } else { start.to_string() };
-		let kdialog = run(
-			"kdialog",
-			&["--title".into(), title.into(), "--getopenfilename".into(), begin, format!("{kind} ({patterns})|All files (*)")],
-			0,
-		)
-		.await;
-		if kdialog.ok {
-			return Ok(some_path(&kdialog.stdout));
-		}
-		if !kdialog.missing {
-			return Ok(None);
-		}
-		for tool in ["zenity", "qarma"] {
-			let file = if start.is_empty() { format!("{dir}/") } else { start.to_string() };
-			let args = vec![
-				"--file-selection".into(),
-				format!("--title={title}"),
-				format!("--filename={file}"),
-				format!("--file-filter={kind} | {patterns}"),
-				"--file-filter=All files | *".into(),
-			];
-			let result = run(tool, &args, 0).await;
-			if result.ok {
-				return Ok(some_path(&result.stdout));
-			}
-			if !result.missing {
-				return Ok(None);
-			}
-		}
-		Err("No file dialog found. Install kdialog or zenity, or type the path.".into())
-	}
+	Err("No file dialog found. Install kdialog or zenity, or type the path.".into())
 }
 
 /// Opens a folder dialog. The path, or None when the user cancels.
 pub async fn pick_folder(title: &str, start: &str) -> Res<Option<String>> {
-	#[cfg(target_os = "macos")]
-	{
-		let dir = if start.is_empty() { home() } else { start.to_string() };
-		let script = r#"
-on run argv
-	set selected to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
-	return POSIX path of selected
-end run
-"#;
-		let result = run("osascript", &["-e".into(), script.into(), title.into(), dir.clone()], 0).await;
+	let dir = if start.is_empty() { home() } else { start.to_string() };
+	if cfg!(target_os = "macos") {
+		return Ok(choose("choose folder", title, &dir).await.map(|p| without_slash(&p)));
+	}
+	let kdialog = run("kdialog", &["--title".into(), title.into(), "--getexistingdirectory".into(), dir.clone()], 0).await;
+	if kdialog.ok {
+		return Ok(some_path(&kdialog.stdout));
+	}
+	if !kdialog.missing {
+		return Ok(None);
+	}
+	for tool in ["zenity", "qarma"] {
+		let result =
+			run(tool, &["--file-selection".into(), "--directory".into(), format!("--title={title}"), format!("--filename={dir}/")], 0)
+				.await;
 		if result.ok {
 			return Ok(some_path(&result.stdout));
 		}
 		if !result.missing {
 			return Ok(None);
 		}
-		Err("No macOS folder dialog found.".into())
 	}
-	#[cfg(not(target_os = "macos"))]
-	{
-		let dir = if start.is_empty() { home() } else { start.to_string() };
-		let kdialog = run("kdialog", &["--title".into(), title.into(), "--getexistingdirectory".into(), dir.clone()], 0).await;
-		if kdialog.ok {
-			return Ok(some_path(&kdialog.stdout));
-		}
-		if !kdialog.missing {
-			return Ok(None);
-		}
-		for tool in ["zenity", "qarma"] {
-			let result =
-				run(tool, &["--file-selection".into(), "--directory".into(), format!("--title={title}"), format!("--filename={dir}/")], 0)
-					.await;
-			if result.ok {
-				return Ok(some_path(&result.stdout));
-			}
-			if !result.missing {
-				return Ok(None);
-			}
-		}
-		Err("No folder dialog found. Install kdialog or zenity, or type the path.".into())
-	}
+	Err("No folder dialog found. Install kdialog or zenity, or type the path.".into())
+}
+
+/// An AppleScript dialog: "choose file" or "choose folder". It starts in `dir`, or in the home
+/// folder when `dir` is gone. None when the user cancels.
+async fn choose(command: &str, title: &str, dir: &str) -> Option<String> {
+	let dir = if Path::new(dir).is_dir() { dir.to_string() } else { home() };
+	// "activate" brings the dialog to the front: the plugin has no window of its own.
+	let script = format!(
+		"on run argv\n\tactivate\n\treturn POSIX path of ({command} with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)))\nend run"
+	);
+	let result = run("osascript", &["-e".into(), script, title.into(), dir], 0).await;
+	if result.ok { some_path(&result.stdout) } else { None }
+}
+
+// macOS ends folder paths with a slash, the other systems do not.
+fn without_slash(path: &str) -> String {
+	let trimmed = path.trim_end_matches('/');
+	if trimmed.is_empty() { path.to_string() } else { trimmed.to_string() }
 }
 
 pub fn session_type() -> String {
-	#[cfg(target_os = "macos")]
-	return "macos".into();
-
-	#[cfg(not(target_os = "macos"))]
-	{
-		let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-		if let Some(kind) = var("XDG_SESSION_TYPE") {
-			return kind;
-		}
-		if var("WAYLAND_DISPLAY").is_some() {
-			return "wayland".into();
-		}
-		if var("DISPLAY").is_some() {
-			return "x11".into();
-		}
-		"unknown".into()
+	if cfg!(target_os = "macos") {
+		return "macos".into();
 	}
+	let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+	if let Some(kind) = var("XDG_SESSION_TYPE") {
+		return kind;
+	}
+	if var("WAYLAND_DISPLAY").is_some() {
+		return "wayland".into();
+	}
+	if var("DISPLAY").is_some() {
+		return "x11".into();
+	}
+	"unknown".into()
 }
 
 fn parse_xprop(text: &str, name: &str) -> Option<String> {
@@ -259,6 +235,13 @@ mod tests {
 			xcomposite_window_value(&Window { id: 123, name: "Firefox".into(), cls: "Navigator".into() }),
 			"123\r\nFirefox\r\nNavigator"
 		);
+	}
+
+	#[test]
+	fn folder_paths_lose_the_slash() {
+		assert_eq!(without_slash("/Users/me/Movies/"), "/Users/me/Movies");
+		assert_eq!(without_slash("/Users/me"), "/Users/me");
+		assert_eq!(without_slash("/"), "/");
 	}
 
 	#[test]
