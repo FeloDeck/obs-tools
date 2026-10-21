@@ -22,6 +22,7 @@ const AUDIO_KINDS: &[&str] = &[
 	"wasapi_process_output_capture",
 	"coreaudio_input_capture",
 	"coreaudio_output_capture",
+	"sck_audio_capture",
 	"ffmpeg_source",
 	"vlc_source",
 	"browser_source",
