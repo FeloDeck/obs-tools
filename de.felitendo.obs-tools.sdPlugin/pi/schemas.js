@@ -452,7 +452,7 @@ export const SCHEMAS = {
 		],
 	},
 	[`${ID}.virtualcam`]: {
-		help: "On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it.",
+		help: "On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it. On macOS, you allow the OBS camera once in System Settings the first time you start it.",
 		fields: [...gestures("mode", START_STOP)],
 	},
 	[`${ID}.focusedwindow`]: {

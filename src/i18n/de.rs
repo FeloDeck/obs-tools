@@ -489,8 +489,8 @@ pub static DE: &[(&str, &str)] = &[
 	("Empty = keep", "Leer = beibehalten"),
 	("Show the transition name", "Namen des Übergangs zeigen"),
 	(
-		"On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it.",
-		"Unter Linux braucht die virtuelle Kamera das Kernelmodul v4l2loopback. Ist es nicht geladen, fragt OBS nach deinem Passwort, um es zu laden.",
+		"On Linux the virtual camera needs the v4l2loopback kernel module. If it is not loaded, OBS asks for your password to load it. On macOS, you allow the OBS camera once in System Settings the first time you start it.",
+		"Unter Linux braucht die virtuelle Kamera das Kernelmodul v4l2loopback. Ist es nicht geladen, fragt OBS nach deinem Passwort, um es zu laden. Unter macOS erlaubst du die OBS-Kamera beim ersten Start einmal in den Systemeinstellungen.",
 	),
 	(
 		"Points a window capture at the window that has focus when you press the key. On macOS, use a macOS Screen Capture source. On Linux, use a Window Capture (Xcomposite) source, and OBS must run on X11: on Wayland, OBS has no way to pick a window without asking you.",
