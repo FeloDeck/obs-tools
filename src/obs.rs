@@ -176,7 +176,7 @@ impl ObsClient {
 		self.last_error.borrow().clone()
 	}
 
-	/// { obs, websocket, rpc, platform } once OBS said hello.
+	/// { obs, websocket, rpc, platform, os } once OBS said hello.
 	pub fn version(&self) -> Option<Value> {
 		self.version.borrow().clone().map(Value::Object)
 	}
@@ -413,6 +413,8 @@ impl ObsClient {
 				if let Some(platform) = version.get("platformDescription") {
 					current.insert("platform".into(), platform.clone());
 				}
+				// "macos", "windows" or the Linux distribution. The settings pages name keys after it.
+				current.insert("os".into(), version.get("platform").cloned().unwrap_or(Value::Null));
 				*me.version.borrow_mut() = Some(current);
 			}
 			if !me.is_current(serial) {

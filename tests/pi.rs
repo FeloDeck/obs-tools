@@ -120,6 +120,10 @@ fn every_text_has_a_german_translation() {
 			add(schema.lookTitle);
 			for (const field of schema.fields ?? []) {
 				for (const key of ["label", "text", "hint", "placeholder", "empty", "unit"]) add(field[key]);
+				// Texts that follow the system OBS runs on.
+				for (const key of ["text", "placeholder"]) {
+					if (typeof field[key] === "function") for (const os of ["macos", "linux"]) add(field[key]({ connection: { version: { os } } }));
+				}
 				// Section titles. "look" is a name in the code, the page shows "On the key" or lookTitle.
 				if (field.section !== "look") add(field.section);
 				if (typeof field.unit === "function") for (const unit of ["db", "percent"]) add(field.unit({ unit }));
