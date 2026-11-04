@@ -541,6 +541,31 @@ impl ObsClient {
 	}
 }
 
+/// A source in a scene. OBS keeps the sources of a group in the group, so `scene` can be a group.
+#[derive(Clone)]
+pub struct SceneItem {
+	pub scene: String,
+	pub id: Value,
+}
+
+/// Finds a source in a scene, or in one of the groups of the scene.
+pub async fn find_scene_item(call: impl Fn(&str, Value) -> Reply, scene: &str, source: &str) -> Option<SceneItem> {
+	let find = async |scene: &str| {
+		let reply = call("GetSceneItemId", crate::obj! { "sceneName" => scene, "sourceName" => source }).await.ok()?;
+		Some(SceneItem { scene: scene.to_string(), id: reply["sceneItemId"].clone() })
+	};
+	if let Some(item) = find(scene).await {
+		return Some(item);
+	}
+	let list = call("GetSceneItemList", crate::obj! { "sceneName" => scene }).await.ok()?;
+	for group in list["sceneItems"].as_array()?.iter().filter(|i| i["isGroup"] == true) {
+		if let Some(item) = find(group["sourceName"].as_str().unwrap_or_default()).await {
+			return Some(item);
+		}
+	}
+	None
+}
+
 fn obs_error(request_type: &Value, status: &Value) -> Error {
 	match status["comment"].as_str() {
 		Some(comment) if !comment.is_empty() => comment.into(),
@@ -651,5 +676,26 @@ mod tests {
 			),
 			"1Ct943GAT+6YQUUX47Ia/ncufilbe6+oD6lY+5kaCu4="
 		);
+	}
+
+	#[tokio::test]
+	async fn finds_a_source_in_a_group() {
+		// Scene "Main" holds "Cam" and the group "Overlay", which holds "Logo".
+		let call = |kind: &str, data: Value| -> Reply {
+			let reply = match (kind, data["sceneName"].as_str(), data["sourceName"].as_str()) {
+				("GetSceneItemId", Some("Main"), Some("Cam")) => Ok(crate::obj! { "sceneItemId" => 1 }),
+				("GetSceneItemId", Some("Overlay"), Some("Logo")) => Ok(crate::obj! { "sceneItemId" => 7 }),
+				("GetSceneItemList", Some("Main"), _) => Ok(serde_json::json!({ "sceneItems": [
+					{ "sourceName": "Cam", "isGroup": false },
+					{ "sourceName": "Overlay", "isGroup": true },
+				] })),
+				_ => Err(Error::from("No scene items were found")),
+			};
+			Box::pin(async move { reply })
+		};
+		let found = |source: &'static str| async move { find_scene_item(call, "Main", source).await.map(|i| (i.scene, i.id)) };
+		assert_eq!(found("Cam").await, Some(("Main".into(), 1.into())));
+		assert_eq!(found("Logo").await, Some(("Overlay".into(), 7.into())));
+		assert_eq!(found("Gone").await, None);
 	}
 }

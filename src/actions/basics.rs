@@ -9,6 +9,7 @@ use super::{Behavior, KeyRc, Kind, Press, Stop, defaults, same_name};
 use crate::Res;
 use crate::icons::{colors, media_glyph};
 use crate::js;
+use crate::obs::{SceneItem, find_scene_item};
 use crate::obs_state::Change;
 use crate::render::{GlyphKey, glyph_key};
 use crate::settings;
@@ -32,7 +33,7 @@ struct VisibilitySettings {
 
 #[derive(Default)]
 struct VisibilityState {
-	item_id: Option<Value>,
+	item: Option<SceneItem>,
 	enabled: bool,
 }
 
@@ -45,23 +46,16 @@ fn vis(k: &KeyRc) -> std::cell::RefMut<'_, VisibilityState> {
 async fn load_visibility(k: &KeyRc) {
 	{
 		let mut s = vis(k);
-		s.item_id = None;
+		s.item = None;
 		s.enabled = false;
 	}
 	let s: VisibilitySettings = k.settings();
 	let Some(scene) = scene_or_live(k, &s.scene).filter(|_| !s.source.is_empty()) else { return };
-	let result: Res<()> = async {
-		let item = k.call("GetSceneItemId", json!({ "sceneName": scene, "sourceName": s.source })).await?;
-		let id = item.get("sceneItemId").cloned().unwrap_or(Value::Null);
-		vis(k).item_id = Some(id.clone());
-		let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": id })).await?;
-		vis(k).enabled = enabled["sceneItemEnabled"] == true;
-		Ok(())
-	}
-	.await;
-	if result.is_err() {
-		vis(k).item_id = None;
-	}
+	let Some(item) = find_scene_item(|kind, data| k.call(kind, data), &scene, &s.source).await else { return };
+	let Ok(enabled) = k.call("GetSceneItemEnabled", json!({ "sceneName": item.scene, "sceneItemId": item.id })).await else { return };
+	let mut state = vis(k);
+	state.item = Some(item);
+	state.enabled = enabled["sceneItemEnabled"] == true;
 }
 
 #[async_trait(?Send)]
@@ -89,14 +83,17 @@ impl Behavior for SourceVisibility {
 
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
 		let s: VisibilitySettings = k.settings();
-		let same_scene = scene_or_live(k, &s.scene).is_some_and(|scene| same_name(data, "sceneName", &scene));
+		let item = vis(k).item.clone();
+		// The scene of the key, or the group the source is in.
+		let same_scene = scene_or_live(k, &s.scene).is_some_and(|scene| same_name(data, "sceneName", &scene))
+			|| item.as_ref().is_some_and(|i| same_name(data, "sceneName", &i.scene));
+		let added = kind == "SceneItemCreated" && same_name(data, "sourceName", &s.source);
 		if kind == "SceneItemEnableStateChanged"
-			&& same_scene
-			&& vis(k).item_id.as_ref().is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, id)))
+			&& item.is_some_and(|i| same_name(data, "sceneName", &i.scene) && data.get("sceneItemId").is_some_and(|d| js::same(d, &i.id)))
 		{
 			vis(k).enabled = data["sceneItemEnabled"] == true;
 			self.render(k);
-		} else if (kind == "SceneItemCreated" || kind == "SceneItemRemoved") && same_scene {
+		} else if ((kind == "SceneItemCreated" || kind == "SceneItemRemoved") && same_scene) || added {
 			let k = k.clone();
 			tokio::task::spawn_local(async move {
 				load_visibility(&k).await;
@@ -115,19 +112,19 @@ impl Behavior for SourceVisibility {
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let s: VisibilitySettings = k.settings();
-		let scene = scene_or_live(k, &s.scene);
-		if vis(k).item_id.is_none() {
+		if vis(k).item.is_none() {
 			load_visibility(k).await;
 		}
-		let Some(item_id) = vis(k).item_id.clone() else {
-			return Err(format!("\"{}\" is not in scene \"{}\"", s.source, scene.unwrap_or_default()).into());
+		let Some(item) = vis(k).item.clone() else {
+			let scene = scene_or_live(k, &s.scene).unwrap_or_default();
+			return Err(format!("\"{}\" is not in scene \"{}\"", s.source, scene).into());
 		};
 		let enabled = match press.op.as_str() {
 			"show" => true,
 			"hide" => false,
 			_ => !vis(k).enabled,
 		};
-		k.call("SetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": enabled })).await?;
+		k.call("SetSceneItemEnabled", json!({ "sceneName": item.scene, "sceneItemId": item.id, "sceneItemEnabled": enabled })).await?;
 		vis(k).enabled = enabled;
 		self.render(k);
 		Ok(())

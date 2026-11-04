@@ -471,7 +471,7 @@ export const SCHEMAS = {
 	[`${ID}.sourcevisibility`]: {
 		fields: [
 			{ key: "scene", label: "Scene", type: "select", list: "scenes", empty: "Current live scene" },
-			{ key: "source", label: "Source", type: "select", list: "sceneItems" },
+			{ key: "source", label: "Source", type: "select", list: "allSceneItems" },
 			...gestures("mode", [
 				["toggle", "Toggle"],
 				["show", "Show"],

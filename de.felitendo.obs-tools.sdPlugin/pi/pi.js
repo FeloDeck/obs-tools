@@ -631,7 +631,7 @@ function setValue(key, value, rerender = false) {
 	save(rerender);
 	if (key === "source") loadLists(["filters", "filterSettings"]);
 	if (key === "filter" && neededLists().includes("filterSettings")) loadLists(["filterSettings"]);
-	if (key === "scene" && neededLists().includes("sceneItems")) loadLists(["sceneItems"]);
+	if (key === "scene") loadLists(neededLists().filter((list) => list === "sceneItems" || list === "allSceneItems"));
 	if (rerender) render();
 }
 

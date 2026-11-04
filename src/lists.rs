@@ -36,7 +36,7 @@ struct ListArgs {
 	source: String,
 	/// filterSettings
 	filter: String,
-	/// sceneItems. Empty: the live scene.
+	/// sceneItems, allSceneItems (also the sources in groups). Empty: the live scene.
 	scene: String,
 }
 
@@ -135,17 +135,36 @@ pub async fn lists(instance: Option<&KeyRc>, names: &[String], payload: &Value) 
 				Value::from(entries.into_iter().map(|(label, value)| json!({ "value": value, "label": label })).collect::<Vec<_>>())
 			}
 			"filterSettings" => filter_settings(&client, &args.source, &args.filter).await,
-			"sceneItems" => {
+			"sceneItems" | "allSceneItems" => {
 				let scene = if args.scene.is_empty() {
 					instance.and_then(|i| i.obs_state()).and_then(|s| s.data().program_scene)
 				} else {
 					Some(args.scene.clone())
 				};
 				match scene {
-					Some(scene) if !scene.is_empty() => Value::from(field(
-						&array(call("GetSceneItemList", json!({ "sceneName": scene })).await, "sceneItems"),
-						"sourceName",
-					)),
+					Some(scene) if !scene.is_empty() => {
+						let items = array(call("GetSceneItemList", json!({ "sceneName": scene })).await, "sceneItems");
+						// A key finds a source in the scene first, then in the groups, so only the first one counts.
+						let mut seen = field(&items, "sourceName");
+						let mut names = Vec::new();
+						for item in &items {
+							names.push(item["sourceName"].clone());
+							if name != "allSceneItems" || item["isGroup"] != true {
+								continue;
+							}
+							// The sources of a group come right after it, as "Group / Source".
+							let group = item["sourceName"].as_str().unwrap_or_default();
+							for inside in array(call("GetGroupSceneItemList", json!({ "sceneName": group })).await, "sceneItems") {
+								let source = inside["sourceName"].clone();
+								if !seen.contains(&source) {
+									seen.push(source.clone());
+									let label = format!("{group} / {}", source.as_str().unwrap_or_default());
+									names.push(json!({ "value": source, "label": label }));
+								}
+							}
+						}
+						Value::from(names)
+					}
 					_ => Value::from(Vec::<Value>::new()),
 				}
 			}

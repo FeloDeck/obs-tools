@@ -10,6 +10,7 @@ use crate::animation::{self, Run, diff_transforms, normalize_phase, run_animatio
 use crate::desktop::focused_window_settings;
 use crate::js;
 use crate::media::{PlayOptions, Playback, play_media};
+use crate::obs::{SceneItem, find_scene_item};
 use crate::settings::or;
 use crate::timers::Timer;
 
@@ -30,14 +31,15 @@ fn file_or_input(file: &str, input: &str) -> String {
 	if title.is_empty() { input.to_string() } else { title }
 }
 
-async fn scene_item(k: &KeyRc, scene: Option<&str>, source: &str) -> Res<Value> {
+/// A source in the scene, with `groups` also in a group of the scene.
+async fn scene_item(k: &KeyRc, scene: Option<&str>, source: &str, groups: bool) -> Res<SceneItem> {
 	let Some(scene) = scene.filter(|s| !s.is_empty()) else { return Err("no scene".into()) };
 	if source.is_empty() {
 		return Err("no source selected".into());
 	}
-	match k.call("GetSceneItemId", json!({ "sceneName": scene, "sourceName": source })).await {
-		Ok(r) => Ok(r.get("sceneItemId").cloned().unwrap_or(Value::Null)),
-		Err(_) => Err(format!("\"{source}\" is not in scene \"{scene}\"").into()),
+	match find_scene_item(|kind, data| k.call(kind, data), scene, source).await.filter(|item| groups || item.scene == scene) {
+		Some(item) => Ok(item),
+		None => Err(format!("\"{source}\" is not in scene \"{scene}\"").into()),
 	}
 }
 
@@ -92,9 +94,8 @@ async fn animate(k: &KeyRc) -> Res<()> {
 	if phases.is_empty() {
 		return Err("the animation has no phases".into());
 	}
-	let scene = scene_or_live(k, &s.scene);
-	let item = scene_item(k, scene.as_deref(), &s.source).await?;
-	let scene = scene.unwrap_or_default();
+	// Not in groups: OBS fits a group around its sources, so moving the source would move the group too.
+	let SceneItem { scene, id: item } = scene_item(k, scene_or_live(k, &s.scene).as_deref(), &s.source, false).await?;
 	let start =
 		k.call("GetSceneItemTransform", json!({ "sceneName": scene, "sceneItemId": item })).await?.get("sceneItemTransform").cloned();
 	anim(k).running = true;
@@ -140,9 +141,7 @@ impl Behavior for SourceAnimation {
 		let s: AnimationSettings = k.settings();
 		match message.get("type").and_then(Value::as_str).unwrap_or("") {
 			"recordStart" => {
-				let scene = scene_or_live(k, &s.scene);
-				let item = scene_item(k, scene.as_deref(), &s.source).await?;
-				let scene = scene.unwrap_or_default();
+				let SceneItem { scene, id: item } = scene_item(k, scene_or_live(k, &s.scene).as_deref(), &s.source, false).await?;
 				let start = k
 					.call("GetSceneItemTransform", json!({ "sceneName": scene, "sceneItemId": item }))
 					.await?
@@ -374,7 +373,7 @@ struct ImageSettings {
 #[derive(Default)]
 struct ImageState {
 	showing: bool,
-	item_id: Option<Value>,
+	item: Option<SceneItem>,
 	hide_timer: Option<Timer>,
 }
 
@@ -407,9 +406,9 @@ impl Behavior for ImageSource {
 	async fn on_obs_event(&self, k: &KeyRc, kind: &str, data: &Value) -> Res<()> {
 		// Someone else hid the source or loaded another picture.
 		let s: ImageSettings = k.settings();
-		let mine = image(k).item_id.clone();
+		let mine = image(k).item.clone();
 		let hidden = kind == "SceneItemEnableStateChanged"
-			&& mine.is_some_and(|id| data.get("sceneItemId").is_some_and(|d| js::same(d, &id)))
+			&& mine.is_some_and(|i| same_name(data, "sceneName", &i.scene) && data.get("sceneItemId").is_some_and(|d| js::same(d, &i.id)))
 			&& data["sceneItemEnabled"] != true;
 		let other_file = kind == "InputSettingsChanged"
 			&& same_name(data, "inputName", &s.input)
@@ -434,10 +433,9 @@ impl Behavior for ImageSource {
 		if s.input.is_empty() {
 			return Err("no image source selected".into());
 		}
-		let scene = scene_or_live(k, &s.scene);
-		let item = scene_item(k, scene.as_deref(), &s.input).await?;
-		let scene = scene.unwrap_or_default();
-		image(k).item_id = Some(item.clone());
+		let found = scene_item(k, scene_or_live(k, &s.scene).as_deref(), &s.input, true).await?;
+		image(k).item = Some(found.clone());
+		let SceneItem { scene, id: item } = found;
 		let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?["sceneItemEnabled"] == true;
 		let settings = k.call("GetInputSettings", json!({ "inputName": s.input })).await?;
 		let current = settings.get("inputSettings").and_then(|i| i.get("file")).and_then(Value::as_str);
@@ -547,8 +545,7 @@ impl Behavior for BrowserSource {
 				k.save_settings(patch(vec![("index", js::num(index))]));
 			}
 			"visibility" => {
-				let scene = k.data().program_scene;
-				let item = scene_item(k, scene.as_deref(), &s.input).await?;
+				let SceneItem { scene, id: item } = scene_item(k, k.data().program_scene.as_deref(), &s.input, true).await?;
 				let enabled =
 					k.call("GetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item })).await?["sceneItemEnabled"] == true;
 				k.call("SetSceneItemEnabled", json!({ "sceneName": scene, "sceneItemId": item, "sceneItemEnabled": !enabled })).await?;

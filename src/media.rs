@@ -8,7 +8,7 @@ use tokio::sync::{oneshot, watch};
 use tokio::task::spawn_local;
 
 use crate::js;
-use crate::obs::ObsClient;
+use crate::obs::{ObsClient, SceneItem, find_scene_item};
 use crate::obs_state::ObsState;
 use crate::timers::{Timer, set_interval};
 use crate::{Error, Res};
@@ -55,15 +55,6 @@ pub fn wait_for_event(client: &Rc<ObsClient>, kind: &str, timeout_ms: f64, filte
 	})
 }
 
-async fn find_item(client: &ObsClient, scene_name: Option<&str>, source_name: &str) -> Option<Value> {
-	let scene_name = scene_name.filter(|s| !s.is_empty())?;
-	client
-		.call("GetSceneItemId", crate::obj! { "sceneName" => scene_name, "sourceName" => source_name })
-		.await
-		.ok()
-		.and_then(|r| r.get("sceneItemId").cloned())
-}
-
 pub struct PlayOptions {
 	pub input: String,
 	/// Empty: the file the source has.
@@ -82,9 +73,8 @@ struct Running {
 	state: Rc<ObsState>,
 	input: String,
 	scene: String,
-	target_scene: Option<String>,
 	previous_scene: Option<String>,
-	item_id: Option<Value>,
+	item: Option<SceneItem>,
 	hide_when_done: bool,
 	return_to_scene: bool,
 	started_at: i64,
@@ -140,12 +130,12 @@ async fn finish(r: Rc<Running>) {
 	}
 	let result: Res<()> = async {
 		if r.hide_when_done
-			&& let Some(item_id) = &r.item_id
+			&& let Some(item) = &r.item
 		{
 			r.client
 				.call(
 					"SetSceneItemEnabled",
-					crate::obj! { "sceneName" => r.target_scene.clone(), "sceneItemId" => item_id.clone(), "sceneItemEnabled" => false },
+					crate::obj! { "sceneName" => item.scene.clone(), "sceneItemId" => item.id.clone(), "sceneItemEnabled" => false },
 				)
 				.await?;
 		}
@@ -186,14 +176,17 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 		)
 		.await?;
 
-	let item_id = if o.show_source || o.hide_when_done { find_item(client, target_scene.as_deref(), &o.input).await } else { None };
+	let item = match target_scene.filter(|s| !s.is_empty()) {
+		Some(scene) if o.show_source || o.hide_when_done => find_scene_item(|kind, data| client.call(kind, data), &scene, &o.input).await,
+		_ => None,
+	};
 	if o.show_source
-		&& let Some(item_id) = &item_id
+		&& let Some(item) = &item
 	{
 		client
 			.call(
 				"SetSceneItemEnabled",
-				crate::obj! { "sceneName" => target_scene.clone(), "sceneItemId" => item_id.clone(), "sceneItemEnabled" => true },
+				crate::obj! { "sceneName" => item.scene.clone(), "sceneItemId" => item.id.clone(), "sceneItemEnabled" => true },
 			)
 			.await?;
 	}
@@ -213,9 +206,8 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 		state: state.clone(),
 		input: o.input.clone(),
 		scene: o.scene.clone(),
-		target_scene,
 		previous_scene,
-		item_id,
+		item,
 		hide_when_done: o.hide_when_done,
 		return_to_scene: o.return_to_scene,
 		started_at: js::now(),
