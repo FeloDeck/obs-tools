@@ -2,6 +2,12 @@
 
 What each release brings, newest first.
 
+## v0.3.1
+
+_4 November 2026_
+
+You can now pick sources that are inside a group, for example on a Source Visibility key. Thanks to megashub for the report.
+
 ## v0.3.0
 
 _21 October 2026_
