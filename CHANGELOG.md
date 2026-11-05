@@ -2,6 +2,12 @@
 
 What each release brings, newest first.
 
+## v0.3.2
+
+_5 November 2026_
+
+Keys no longer switch the wrong source when OBS gave two sources in a group the same ID. The key tells you how to fix the scene instead. Thanks to megashub for the report.
+
 ## v0.3.1
 
 _4 November 2026_
