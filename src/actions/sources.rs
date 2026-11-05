@@ -37,7 +37,7 @@ async fn scene_item(k: &KeyRc, scene: Option<&str>, source: &str, groups: bool) 
 	if source.is_empty() {
 		return Err("no source selected".into());
 	}
-	match find_scene_item(|kind, data| k.call(kind, data), scene, source).await.filter(|item| groups || item.scene == scene) {
+	match find_scene_item(|kind, data| k.call(kind, data), scene, source).await?.filter(|item| groups || item.scene == scene) {
 		Some(item) => Ok(item),
 		None => Err(format!("\"{source}\" is not in scene \"{scene}\"").into()),
 	}

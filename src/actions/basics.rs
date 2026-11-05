@@ -43,31 +43,32 @@ fn vis(k: &KeyRc) -> std::cell::RefMut<'_, VisibilityState> {
 	k.own::<VisibilityState>()
 }
 
-async fn load_visibility(k: &KeyRc) {
+async fn load_visibility(k: &KeyRc) -> Res<()> {
 	{
 		let mut s = vis(k);
 		s.item = None;
 		s.enabled = false;
 	}
 	let s: VisibilitySettings = k.settings();
-	let Some(scene) = scene_or_live(k, &s.scene).filter(|_| !s.source.is_empty()) else { return };
-	let Some(item) = find_scene_item(|kind, data| k.call(kind, data), &scene, &s.source).await else { return };
-	let Ok(enabled) = k.call("GetSceneItemEnabled", json!({ "sceneName": item.scene, "sceneItemId": item.id })).await else { return };
+	let Some(scene) = scene_or_live(k, &s.scene).filter(|_| !s.source.is_empty()) else { return Ok(()) };
+	let Some(item) = find_scene_item(|kind, data| k.call(kind, data), &scene, &s.source).await? else { return Ok(()) };
+	let enabled = k.call("GetSceneItemEnabled", json!({ "sceneName": item.scene, "sceneItemId": item.id })).await?;
 	let mut state = vis(k);
 	state.item = Some(item);
 	state.enabled = enabled["sceneItemEnabled"] == true;
+	Ok(())
 }
 
 #[async_trait(?Send)]
 impl Behavior for SourceVisibility {
 	async fn on_connected(&self, k: &KeyRc) -> Res<()> {
-		load_visibility(k).await;
+		let _ = load_visibility(k).await;
 		Ok(())
 	}
 
 	async fn on_settings_changed(&self, k: &KeyRc, _old: &Map<String, Value>) -> Res<()> {
 		if k.online() {
-			load_visibility(k).await;
+			let _ = load_visibility(k).await;
 		}
 		Ok(())
 	}
@@ -75,7 +76,7 @@ impl Behavior for SourceVisibility {
 	async fn on_state_change(&self, k: &KeyRc, change: Change) -> Res<()> {
 		// Without a fixed scene the key follows the live scene.
 		if k.settings::<VisibilitySettings>().scene.is_empty() && change == Change::Program {
-			load_visibility(k).await;
+			let _ = load_visibility(k).await;
 		}
 		self.render(k);
 		Ok(())
@@ -93,10 +94,10 @@ impl Behavior for SourceVisibility {
 		{
 			vis(k).enabled = data["sceneItemEnabled"] == true;
 			self.render(k);
-		} else if ((kind == "SceneItemCreated" || kind == "SceneItemRemoved") && same_scene) || added {
+		} else if (matches!(kind, "SceneItemCreated" | "SceneItemRemoved" | "SceneItemListReindexed") && same_scene) || added {
 			let k = k.clone();
 			tokio::task::spawn_local(async move {
-				load_visibility(&k).await;
+				let _ = load_visibility(&k).await;
 				k.render();
 			});
 		}
@@ -112,9 +113,8 @@ impl Behavior for SourceVisibility {
 
 	async fn on_press(&self, k: &KeyRc, press: Press) -> Res<()> {
 		let s: VisibilitySettings = k.settings();
-		if vis(k).item.is_none() {
-			load_visibility(k).await;
-		}
+		// Look it up again: sources may have moved into a group or past another one.
+		load_visibility(k).await?;
 		let Some(item) = vis(k).item.clone() else {
 			let scene = scene_or_live(k, &s.scene).unwrap_or_default();
 			return Err(format!("\"{}\" is not in scene \"{}\"", s.source, scene).into());

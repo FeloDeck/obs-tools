@@ -177,7 +177,7 @@ pub async fn play_media(client: &Rc<ObsClient>, state: &Rc<ObsState>, o: PlayOpt
 		.await?;
 
 	let item = match target_scene.filter(|s| !s.is_empty()) {
-		Some(scene) if o.show_source || o.hide_when_done => find_scene_item(|kind, data| client.call(kind, data), &scene, &o.input).await,
+		Some(scene) if o.show_source || o.hide_when_done => find_scene_item(|kind, data| client.call(kind, data), &scene, &o.input).await?,
 		_ => None,
 	};
 	if o.show_source

@@ -75,6 +75,7 @@ export const DE = {
 	"the virtual camera did not start": "die virtuelle Kamera ist nicht gestartet",
 	"the virtual camera did not start: the v4l2loopback kernel module is not loaded": "die virtuelle Kamera ist nicht gestartet: das Kernelmodul v4l2loopback ist nicht geladen",
 	"\"{source}\" is not in scene \"{scene}\"": "„{source}“ ist nicht in der Szene „{scene}“",
+	"OBS gave \"{source}\" the same ID as \"{other}\". Duplicate the scene in OBS to fix it.": "OBS hat „{source}“ dieselbe ID gegeben wie „{other}“. Dupliziere die Szene in OBS, um das zu beheben.",
 	"{transition} has no duration": "{transition} hat keine Dauer",
 	"{request} failed": "{request} fehlgeschlagen",
 	"{request} failed (code {code})": "{request} fehlgeschlagen (Code {code})",

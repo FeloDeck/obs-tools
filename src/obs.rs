@@ -548,22 +548,35 @@ pub struct SceneItem {
 	pub id: Value,
 }
 
-/// Finds a source in a scene, or in one of the groups of the scene.
-pub async fn find_scene_item(call: impl Fn(&str, Value) -> Reply, scene: &str, source: &str) -> Option<SceneItem> {
-	let find = async |scene: &str| {
-		let reply = call("GetSceneItemId", crate::obj! { "sceneName" => scene, "sourceName" => source }).await.ok()?;
-		Some(SceneItem { scene: scene.to_string(), id: reply["sceneItemId"].clone() })
-	};
-	if let Some(item) = find(scene).await {
-		return Some(item);
+/// Finds a source in a scene, or in one of the groups of the scene. `None` when it is in neither.
+pub async fn find_scene_item(call: impl Fn(&str, Value) -> Reply, scene: &str, source: &str) -> Res<Option<SceneItem>> {
+	let Ok(list) = call("GetSceneItemList", crate::obj! { "sceneName" => scene }).await else { return Ok(None) };
+	let items = list["sceneItems"].as_array().map(Vec::as_slice).unwrap_or_default();
+	if let Some(item) = pick_scene_item(items, scene, source)? {
+		return Ok(Some(item));
 	}
-	let list = call("GetSceneItemList", crate::obj! { "sceneName" => scene }).await.ok()?;
-	for group in list["sceneItems"].as_array()?.iter().filter(|i| i["isGroup"] == true) {
-		if let Some(item) = find(group["sourceName"].as_str().unwrap_or_default()).await {
-			return Some(item);
+	for group in items.iter().filter(|i| i["isGroup"] == true) {
+		let group = group["sourceName"].as_str().unwrap_or_default();
+		let Ok(list) = call("GetGroupSceneItemList", crate::obj! { "sceneName" => group }).await else { continue };
+		if let Some(item) = pick_scene_item(list["sceneItems"].as_array().map(Vec::as_slice).unwrap_or_default(), group, source)? {
+			return Ok(Some(item));
 		}
 	}
-	None
+	Ok(None)
+}
+
+/// The source in a list of scene items, from the bottom up like OBS. OBS also finds an item by its ID
+/// from the bottom up. A source moved into a group keeps its ID, so two items in a group can share
+/// one. Then OBS would change the lower one, so this fails.
+fn pick_scene_item(items: &[Value], scene: &str, source: &str) -> Res<Option<SceneItem>> {
+	let Some(item) = items.iter().find(|i| i["sourceName"] == source) else { return Ok(None) };
+	let id = &item["sceneItemId"];
+	let first = items.iter().find(|i| i["sceneItemId"] == *id).unwrap_or(item);
+	if first["sourceName"] != source {
+		let other = first["sourceName"].as_str().unwrap_or_default();
+		return Err(format!("OBS gave \"{source}\" the same ID as \"{other}\". Duplicate the scene in OBS to fix it.").into());
+	}
+	Ok(Some(SceneItem { scene: scene.to_string(), id: id.clone() }))
 }
 
 fn obs_error(request_type: &Value, status: &Value) -> Error {
@@ -680,22 +693,30 @@ mod tests {
 
 	#[tokio::test]
 	async fn finds_a_source_in_a_group() {
-		// Scene "Main" holds "Cam" and the group "Overlay", which holds "Logo".
+		// Scene "Main" holds "Cam" and the group "Overlay". The group holds, from the bottom up,
+		// "Video", "Logo" and "Alerts". OBS gave "Video" and "Logo" the same ID.
 		let call = |kind: &str, data: Value| -> Reply {
-			let reply = match (kind, data["sceneName"].as_str(), data["sourceName"].as_str()) {
-				("GetSceneItemId", Some("Main"), Some("Cam")) => Ok(crate::obj! { "sceneItemId" => 1 }),
-				("GetSceneItemId", Some("Overlay"), Some("Logo")) => Ok(crate::obj! { "sceneItemId" => 7 }),
-				("GetSceneItemList", Some("Main"), _) => Ok(serde_json::json!({ "sceneItems": [
-					{ "sourceName": "Cam", "isGroup": false },
-					{ "sourceName": "Overlay", "isGroup": true },
+			let reply = match (kind, data["sceneName"].as_str()) {
+				("GetSceneItemList", Some("Main")) => Ok(serde_json::json!({ "sceneItems": [
+					{ "sourceName": "Cam", "sceneItemId": 1, "isGroup": false },
+					{ "sourceName": "Overlay", "sceneItemId": 2, "isGroup": true },
 				] })),
-				_ => Err(Error::from("No scene items were found")),
+				("GetGroupSceneItemList", Some("Overlay")) => Ok(serde_json::json!({ "sceneItems": [
+					{ "sourceName": "Video", "sceneItemId": 1, "isGroup": false },
+					{ "sourceName": "Logo", "sceneItemId": 1, "isGroup": false },
+					{ "sourceName": "Alerts", "sceneItemId": 3, "isGroup": false },
+				] })),
+				_ => Err(Error::from("No source was found")),
 			};
 			Box::pin(async move { reply })
 		};
-		let found = |source: &'static str| async move { find_scene_item(call, "Main", source).await.map(|i| (i.scene, i.id)) };
-		assert_eq!(found("Cam").await, Some(("Main".into(), 1.into())));
-		assert_eq!(found("Logo").await, Some(("Overlay".into(), 7.into())));
-		assert_eq!(found("Gone").await, None);
+		let found = |source: &'static str| async move {
+			find_scene_item(call, "Main", source).await.map(|i| i.map(|i| (i.scene, i.id))).map_err(|e| e.0)
+		};
+		assert_eq!(found("Cam").await, Ok(Some(("Main".into(), 1.into()))));
+		assert_eq!(found("Alerts").await, Ok(Some(("Overlay".into(), 3.into()))));
+		assert_eq!(found("Video").await, Ok(Some(("Overlay".into(), 1.into()))));
+		assert!(found("Logo").await.is_err_and(|e| e.contains("\"Video\"")));
+		assert_eq!(found("Gone").await, Ok(None));
 	}
 }
